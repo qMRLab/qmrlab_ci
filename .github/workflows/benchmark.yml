@@ -240,7 +240,17 @@ jobs:
 
   publish:
     needs: analyze
-    if: always() && needs.analyze.result == 'success'
+    # Pages deployment semantics are unreliable off the default branch, but the real
+    # reason for the branch check is that a feature-branch run must never overwrite
+    # the published site with partial or single-target results. Observed live: a
+    # single-target validation run on validate-repeats-fix reached this job and
+    # attempted to deploy (it failed on BlobNotFound, but the attempt itself was the
+    # bug -- it should never have been eligible). analyze still runs on every branch,
+    # so a branch gets the full check without the ability to clobber what is live.
+    if: >
+      always()
+      && needs.analyze.result == 'success'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
