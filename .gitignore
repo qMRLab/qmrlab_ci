@@ -1,7 +1,9 @@
-.DS_Store
-.superpowers/
 __pycache__/
-*.egg-info/
+.DS_Store
 .pytest_cache/
+.superpowers/
+*.egg-info/
 osf-data/
+qmrust/
+results/
 site/
