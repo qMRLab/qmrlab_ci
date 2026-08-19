@@ -39,9 +39,13 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
                     if isfield(FitResults, cands{kk}), src = cands{kk}; break; end
                 end
                 if isempty(src)
+                    % Names the fields FitResults ACTUALLY has, not just the ones tried:
+                    % the older qMRLab APIs this benchmark also targets may rename them,
+                    % and a CI log alone should be enough to diagnose that.
                     error('qmrlab_ci:missingOutput', ...
-                          '%s: none of {%s} present in FitResults for map %s', ...
-                          modelId, strjoin(cands, ', '), nm);
+                          '%s: none of {%s} present in FitResults for map %s; FitResults has {%s}', ...
+                          modelId, strjoin(cands, ', '), nm, ...
+                          strjoin(fieldnames(FitResults)', ', '));
                 end
                 if ~strcmp(src, nm)
                     fprintf('  %s/%s <- FitResults.%s\n', modelId, nm, src);
@@ -77,7 +81,17 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
             record.timing = struct();
             record.maps = {};
         end
-        qmrlab_ci_record(fullfile(outRoot, 'records', [modelId '.json']), record);
+        % The record write sits OUTSIDE the fit's try/catch and can throw on its own
+        % (MATLAB:MKDIR:ExistsAsFile, a full disk). Letting that escape would end the loop
+        % and discard every remaining model for this target, breaking the guarantee above
+        % that one broken model degrades only itself. Reported on stderr so a CI log shows
+        % it, then the sweep continues.
+        try
+            qmrlab_ci_record(fullfile(outRoot, 'records', [modelId '.json']), record);
+        catch werr
+            fprintf(2, '%s / %s: record write FAILED (%s: %s) -- continuing\n', ...
+                    targetId, modelId, werr.identifier, werr.message);
+        end
         fprintf('%s / %s: %s\n', targetId, modelId, record.status);
     end
 end
