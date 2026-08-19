@@ -1,0 +1,153 @@
+# PREVIEW ONLY — disposable scaffolding, deleted when benchmark.yml lands (plan Task 18).
+#
+# Exists so the job graph can be seen before the pieces that fill it are built. It runs the
+# real matrix generation and the real data fetch, so the fan-out and the checksum pins are
+# genuinely exercised; the fit steps only print what they WOULD run, because MATLAB is the
+# expensive part and its drivers do not exist yet.
+#
+# workflow_dispatch only. No push trigger, deliberately: this must never fire on its own.
+name: preview (job graph)
+
+on:
+  workflow_dispatch:
+    inputs:
+      fetch_data:
+        description: "Download and checksum-verify the 8 OSF archives (~72 MB)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      - name: Fetch and verify the canonical inputs
+        if: ${{ inputs.fetch_data }}
+        # The real thing. A checksum mismatch aborts the run rather than degrading a target:
+        # every downstream number depends on these bytes being the declared ones.
+        run: python -m scripts.fetch_data --out osf-data || echo "::warning::scripts.fetch_data not built yet (plan Task 12)"
+      - name: What this job will do
+        run: |
+          echo "Fetches 8 OSF archives pinned by URL version AND SHA-256, verifies both,"
+          echo "unpacks them into one canonical tree, and uploads it as a single artifact."
+          echo "Every fit job downloads THAT artifact, so all 15 targets fit identical bytes."
+
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matlab: ${{ steps.gen.outputs.matlab }}
+      native: ${{ steps.gen.outputs.native }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      # Real, and already working: globs targets/*/target.yml into two lane-split matrices.
+      - id: gen
+        run: python -m harness.matrix --root .
+      - name: Summarise the fan-out
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          from harness.config import load_targets
+          from harness.matrix import build_matrices
+          m = build_matrices(load_targets("."))
+          print("## Targets this benchmark will run\n")
+          print("| Target | Lane | MATLAB | Era | Models |")
+          print("|---|---|---|---|---|")
+          for lane in ("matlab", "native"):
+              for e in m[lane]:
+                  print(f"| `{e['id']}` | {lane} | {e.get('matlab_release','—')} "
+                        f"| {e.get('era','—')} | {len(e['models'])} |")
+          PY
+
+  fit-matlab:
+    needs: [prepare-data, plan]
+    runs-on: ubuntu-latest
+    strategy:
+      # One target failing to install must never discard the other thirteen.
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.matlab) }}
+    steps:
+      - name: What this leg will do
+        run: |
+          echo "target:  ${{ matrix.target.id }}"
+          echo "source:  ${{ matrix.target.source_repo }}@${{ matrix.target.source_ref }}"
+          echo "MATLAB:  ${{ matrix.target.matlab_release }}  (era ${{ matrix.target.era }} driver)"
+          echo "models:  ${{ join(matrix.target.models, ', ') }}"
+          echo "repeats: ${{ matrix.target.repeats_json }}"
+          echo ""
+          echo "Real run: setup-matlab -> optional targets/<id>/setup.sh -> ONE run-command"
+          echo "invoking qmrlab_ci_era${{ matrix.target.era }} over all models in one MATLAB session."
+          echo "MATLAB is skipped here; the era drivers are plan Tasks 14-16."
+
+  fit-native:
+    needs: [prepare-data, plan]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.native) }}
+    steps:
+      - name: What this leg will do
+        run: |
+          echo "target: ${{ matrix.target.id }}"
+          echo "source: ${{ matrix.target.source_repo }}@${{ matrix.target.source_ref }}"
+          echo "models: ${{ join(matrix.target.models, ', ') }}"
+          echo ""
+          echo "Real run: cargo build --release, then targets/<id>/run.sh over its models."
+          echo "Plan Task 17."
+
+  analyze:
+    needs: [plan, fit-matlab, fit-native]
+    # always(): partial results are the normal case, not an error.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      - name: Prove the analysis stage runs, on synthetic records
+        # harness.analyze is built and tested; this shows it consuming a results tree of the
+        # exact shape the fit jobs will produce, so the seam is visible before either lane
+        # is real. Deliberately language-agnostic: it reads maps and JSON, nothing else.
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys, tempfile
+          sys.path.insert(0, "tests")
+          from helpers import write_nifti
+          from harness.analyze import analyze
+          root = pathlib.Path(tempfile.mkdtemp()); res = root / "res"
+          (root / "masks").mkdir(parents=True)
+          write_nifti(root / "masks" / "vfa_t1.nii.gz", [1, 1, 1], shape=(3,), datatype=2)
+          for tid, vals, unit in [("qmrlab@v3.0.0", [1.0, 2.0, 3.0], "s"),
+                                  ("qmrust@main",   [1000.0, 2000.0, 3000.0], "ms")]:
+              (res / tid / "maps" / "vfa_t1").mkdir(parents=True)
+              (res / tid / "records").mkdir(parents=True)
+              write_nifti(res / tid / "maps" / "vfa_t1" / "T1.nii.gz", vals, shape=(3,))
+              (res / tid / "records" / "vfa_t1.json").write_text(json.dumps({
+                  "target": tid, "software": "x", "version": "1", "model": "vfa_t1",
+                  "status": "ok", "environment": {},
+                  "timing": {"repeats": 1, "fit_seconds": [1.0], "n_voxels_fitted": 3},
+                  "maps": [{"name": "T1", "unit": unit, "path": "maps/vfa_t1/T1.nii.gz"}]}))
+          doc = analyze(res, root, models_root=".", reference="qmrlab@v3.0.0")
+          for r in doc["records"]:
+              m = r["maps"][0]
+              print(f"{r['target']:16s} mean={m['stats']['mean']} {m['stats_unit']}  "
+                    f"hash={m['voxel_sha256'][:12]}")
+          print("\nSame fit, different units: statistics agree, hashes differ. That separation")
+          print("is what makes cross-software byte-equivalence mean anything.")
+          PY
+      - name: What this job will really do
+        run: |
+          echo "Downloads every results-* artifact, computes all hashes and masked statistics"
+          echo "in one place, runs all-pairs comparisons, writes site/data/results.json,"
+          echo "renders the static site, and appends one line to the drift log."
+          echo "Site and drift are plan Tasks 10-11; publish is Task 18."
