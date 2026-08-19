@@ -1,0 +1,222 @@
+name: benchmark
+
+# Weekly full-matrix run: fits every qMRI model against every qMRLab version this
+# harness targets, plus the Rust reimplementation, and publishes the comparison.
+# Not nightly: released versions are immutable, so the only thing a more frequent
+# run could catch is environment drift, which a week resolves fine.
+
+on:
+  schedule:
+    - cron: "0 4 * * 2"
+  workflow_dispatch:
+  push:
+    paths:
+      - "harness/**"
+      - "scripts/**"
+      - "matlab/**"
+      - "targets/**"
+      - "models/**"
+      - "data/**"
+      - ".github/workflows/benchmark.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  prepare-data:
+    runs-on: ubuntu-latest
+    # OSF fetch + checksum verify of eight archives; observed well under 5 minutes.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      # A checksum mismatch aborts the whole run rather than degrading one target:
+      # every downstream number depends on these bytes being the declared ones.
+      - run: python -m scripts.fetch_data --out osf-data
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canonical-inputs
+          path: osf-data
+          retention-days: 7
+
+  plan:
+    runs-on: ubuntu-latest
+    # Pure Python, no network beyond the checkout; seconds in practice.
+    timeout-minutes: 10
+    outputs:
+      matlab: ${{ steps.gen.outputs.matlab }}
+      rust: ${{ steps.gen.outputs.rust }}
+      run_started_utc: ${{ steps.stamp.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      - id: gen
+        run: python -m harness.matrix --root .
+      - id: stamp
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+  fit-matlab:
+    needs: [prepare-data, plan]
+    runs-on: ubuntu-latest
+    # Spec Sec.10: per-job timeouts prevent a wedged MATLAB -- a stalled fit, a hung
+    # install, a licensing call that never returns -- from burning the 360-minute
+    # default. smoke.yml's single-target legs ran 2m16s-14m46s; V1 (qmt_spgr, the
+    # slowest fit in the project) is the long pole. 120 minutes leaves a wide margin.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.matlab) }}
+    env:
+      QMRLAB_CI_RUN_STARTED: ${{ needs.plan.outputs.run_started_utc }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: canonical-inputs, path: osf-data}
+
+      - name: Check out qMRLab at the target's ref
+        run: |
+          git clone --depth 1 --branch "${{ matrix.target.source_ref }}" \
+            "https://github.com/${{ matrix.target.source_repo }}.git" qMRLab
+
+      - name: Target-specific install fixes
+        run: |
+          script="targets/${{ matrix.target.id }}/setup.sh"
+          if [ -x "$script" ]; then bash "$script"; else echo "no setup.sh"; fi
+
+      # Task 14's review flagged that the drivers take `models` as an unvalidated
+      # cellstr: a single-element list built carelessly from a GitHub Actions
+      # expression degrades to a bare string instead of {'a'}, breaking `models{ii}`
+      # in a way that reads as a driver bug rather than a caller bug. Built and
+      # verified once, in this step, then the SAME string is what run-command below
+      # actually executes -- copied from smoke.yml's proven approach.
+      - name: Build the MATLAB command, asserting models arrives as a cellstr
+        id: cmd
+        run: |
+          CMD="addpath(genpath('qMRLab')); addpath('matlab'); qmrlab_ci_era${{ matrix.target.era }}('osf-data', 'results/${{ matrix.target.id }}', '${{ matrix.target.id }}', '${{ matrix.target.version }}', '${{ matrix.target.matlab_release }}', {'${{ join(matrix.target.models, ''',''') }}'}, '${{ matrix.target.repeats_json }}');"
+          echo "$CMD"
+          case "$CMD" in
+            *"{'"*"'}"*)
+              echo "models reaches MATLAB as a cellstr" ;;
+            *)
+              echo "::error::models did NOT render as a cellstr -- got: $CMD"
+              exit 1 ;;
+          esac
+          {
+            echo 'cmd<<BENCH_CMD_EOF'
+            echo "$CMD"
+            echo 'BENCH_CMD_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: matlab-actions/setup-matlab@v2
+        with:
+          release: ${{ matrix.target.matlab_release }}
+          products: ${{ matrix.target.matlab_products }}
+
+      # MUST go through run-command. setup-matlab installs MATLAB but does not license
+      # it; licensing happens inside the matlab-batch wrapper this action invokes.
+      # Calling the matlab binary directly fails with "Unable to find a license".
+      - uses: matlab-actions/run-command@v2
+        with:
+          command: ${{ steps.cmd.outputs.cmd }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.target.id }}
+          path: results/${{ matrix.target.id }}
+
+  fit-rust:
+    needs: [prepare-data, plan]
+    runs-on: ubuntu-latest
+    # Rust build + fit; no MATLAB license wait, but leave headroom for a cold
+    # cargo build on a fresh runner.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.rust) }}
+    env:
+      QMRLAB_CI_RUN_STARTED: ${{ needs.plan.outputs.run_started_utc }}
+      QMRLAB_CI_SOURCE_REPO: ${{ matrix.target.source_repo }}
+      QMRLAB_CI_SOURCE_REF: ${{ matrix.target.source_ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with: {name: canonical-inputs, path: osf-data}
+
+      - run: bash "targets/${{ matrix.target.id }}/setup.sh"
+      - run: |
+          bash "targets/${{ matrix.target.id }}/run.sh" \
+            osf-data "results/${{ matrix.target.id }}" "${{ matrix.target.id }}" \
+            ${{ join(matrix.target.models, ' ') }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.target.id }}
+          path: results/${{ matrix.target.id }}
+
+  analyze:
+    needs: [plan, fit-matlab, fit-rust]
+    # always(): a target that failed to install must not prevent the other fourteen
+    # from being published. Partial results are the normal case, not an error.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: results
+      - run: |
+          python -m harness.analyze --results-dir results --root . \
+            --out site/data/results.json
+          python -m harness.site --results site/data/results.json --out-dir site
+      # Supplies steps.pages.outputs.base_url. Needed because qMRLab serves org
+      # project pages from the custom domain qmrlab.org, NOT qmrlab.github.io, so
+      # a hand-built <owner>.github.io/<repo> URL would 404 forever and the drift
+      # log would silently restart from empty every single week.
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Carry the drift log forward and append this run
+        run: |
+          # Read the previously published log rather than keeping state in the repo.
+          # A 404 on the very first run is expected, hence the `|| echo`.
+          curl -fsSL "${{ steps.pages.outputs.base_url }}/data/history.jsonl" \
+            -o site/data/history.jsonl || echo "no previous history; starting one"
+          python -m harness.drift --results site/data/results.json \
+            --history site/data/history.jsonl \
+            --run-started-utc "${{ needs.plan.outputs.run_started_utc }}"
+      - uses: actions/upload-pages-artifact@v3
+        with: {path: site}
+
+  publish:
+    needs: analyze
+    if: always() && needs.analyze.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
