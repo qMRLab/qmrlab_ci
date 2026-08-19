@@ -84,3 +84,63 @@ def load_sources(root: pathlib.Path) -> dict[str, SourceSpec]:
             bytes=_require(entry, "bytes", f"{path}:{name}"),
         )
     return sources
+
+
+MATLAB_PRODUCTS = (
+    "Image_Processing_Toolbox",
+    "Optimization_Toolbox",
+    "Statistics_and_Machine_Learning_Toolbox",
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class TargetSpec:
+    id: str
+    software: str
+    version: str
+    lane: str
+    era: int | None
+    matlab_release: str | None
+    matlab_products: tuple[str, ...]
+    source_repo: str
+    source_ref: str
+    models: tuple[str, ...]
+    repeats: dict[str, int]
+
+    def repeats_for(self, model: str) -> int:
+        return int(self.repeats.get(model, self.repeats.get("default", 1)))
+
+
+def load_targets(root: pathlib.Path) -> dict[str, TargetSpec]:
+    targets: dict[str, TargetSpec] = {}
+    for path in sorted((pathlib.Path(root) / "targets").glob("*/target.yml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        where = str(path)
+        lane = _require(doc, "lane", where)
+        if lane not in ("matlab", "native"):
+            raise ConfigError(f"{where}: lane must be 'matlab' or 'native', got {lane!r}")
+        source = _require(doc, "source", where)
+        spec = TargetSpec(
+            id=_require(doc, "id", where),
+            software=_require(doc, "software", where),
+            version=_require(doc, "version", where),
+            lane=lane,
+            era=doc.get("era"),
+            matlab_release=doc.get("matlab_release"),
+            matlab_products=tuple(doc.get("matlab_products", MATLAB_PRODUCTS)),
+            source_repo=_require(source, "repo", where),
+            source_ref=_require(source, "ref", where),
+            models=tuple(_require(doc, "models", where)),
+            repeats=dict(doc.get("repeats", {"default": 1})),
+        )
+        if lane == "matlab" and not spec.matlab_release:
+            raise ConfigError(f"{where}: matlab lane requires matlab_release")
+        if lane == "matlab" and spec.era not in (1, 2, 3):
+            raise ConfigError(
+                f"{where}: matlab lane requires era 1, 2 or 3 (got {spec.era!r}); "
+                "the era selects which driver runs"
+            )
+        if spec.id in targets:
+            raise ConfigError(f"{where}: duplicate target id {spec.id!r}")
+        targets[spec.id] = spec
+    return targets
