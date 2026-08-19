@@ -24,3 +24,9 @@ The committed bytes are that script's output. Two rules:
 The three derived masks exist because those archives ship no mask. The rule is the one
 qmrust's `ci/compare_maps.py` applies implicitly when it restricts to finite, positive
 voxels — made explicit so it is applied identically to every target and can be reviewed.
+
+`b1_dam` retains 100% of voxels (4096/4096): the archive genuinely has no background
+in `SFalpha`/`SF2alpha`, and this matches qmrust's own comment on this dataset that the
+comparison "holds over the whole image including the out-of-domain voxels where the
+ratio exceeds 1" — a full mask is the honest answer here, not a misfire, so this does
+not need re-investigating.

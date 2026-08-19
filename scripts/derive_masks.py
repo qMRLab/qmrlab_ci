@@ -50,7 +50,13 @@ def write_mask_nifti(path, mask: np.ndarray, shape) -> None:
     struct.pack_into("<2f", hdr, 112, 1.0, 0.0)
     hdr[344:348] = b"n+1\x00"
     body = np.asarray(mask, dtype=np.uint8).tobytes()
-    pathlib.Path(path).write_bytes(gzip.compress(bytes(hdr) + b"\x00" * 4 + body))
+    # mtime=0 because these files are COMMITTED. gzip stamps the current time into its
+    # header by default, so regenerating would rewrite all eight files with identical
+    # content and different bytes -- turning "rerun this and diff it" from the check that
+    # justifies the masks into noise that hides a real change.
+    pathlib.Path(path).write_bytes(
+        gzip.compress(bytes(hdr) + b"\x00" * 4 + body, mtime=0)
+    )
 
 
 def _find(root: pathlib.Path, dataset: str, name: str) -> pathlib.Path:
