@@ -9,6 +9,13 @@
 name: preview (job graph)
 
 on:
+  # A workflow_dispatch workflow is only dispatchable once it exists on the DEFAULT branch,
+  # and this one is deliberately not going to main. So it also triggers on pushes that touch
+  # this file itself -- narrow on purpose: it fires when the preview changes, and stays quiet
+  # through the ten remaining implementation pushes.
+  push:
+    branches: [implement-benchmark-harness]
+    paths: [".github/workflows/preview.yml"]
   workflow_dispatch:
     inputs:
       fetch_data:
@@ -28,7 +35,7 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -e .
       - name: Fetch and verify the canonical inputs
-        if: ${{ inputs.fetch_data }}
+        if: ${{ github.event_name == 'push' || inputs.fetch_data }}
         # The real thing. A checksum mismatch aborts the run rather than degrading a target:
         # every downstream number depends on these bytes being the declared ones.
         run: python -m scripts.fetch_data --out osf-data || echo "::warning::scripts.fetch_data not built yet (plan Task 12)"
