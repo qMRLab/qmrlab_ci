@@ -32,8 +32,21 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
             names = qmrlab_ci_map_names(modelId);
             for jj = 1:numel(names)
                 nm = names{jj};
+                cands = qmrlab_ci_field_candidates(modelId, nm);
+                src = '';
+                for kk = 1:numel(cands)
+                    if isfield(FitResults, cands{kk}), src = cands{kk}; break; end
+                end
+                if isempty(src)
+                    error('qmrlab_ci:missingOutput', ...
+                          '%s: none of {%s} present in FitResults for map %s', ...
+                          modelId, strjoin(cands, ', '), nm);
+                end
+                if ~strcmp(src, nm)
+                    fprintf('  %s/%s <- FitResults.%s\n', modelId, nm, src);
+                end
                 rel = fullfile('maps', modelId, [nm '.nii.gz']);
-                qmrlab_ci_write_nii(fullfile(outRoot, rel), FitResults.(nm));
+                qmrlab_ci_write_nii(fullfile(outRoot, rel), FitResults.(src));
                 maps{end+1} = struct('name', nm, ...
                                      'unit', qmrlab_ci_unit_for(modelId, nm), ...
                                      'path', strrep(rel, '\', '/'));  %#ok<AGROW>
@@ -45,8 +58,12 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
                 nVox = numel(FitResults.(names{1}));
             end
 
-            record.timing = struct('repeats', n, 'fit_seconds', times, ...
-                                   'n_voxels_fitted', nVox);
+            % jsonencode() writes a 1-element numeric array as a bare scalar, which
+            % violates the record schema (repeats must equal numel(fit_seconds)). A cell
+            % array always encodes as a JSON array, so the single-repeat case -- which is
+            % the CONFIGURED case for qmt_spgr -- round-trips correctly.
+            record.timing = struct('repeats', n, 'n_voxels_fitted', nVox);
+            record.timing.fit_seconds = num2cell(times);
             record.maps = maps;
         catch err
             record.status = 'failed';
