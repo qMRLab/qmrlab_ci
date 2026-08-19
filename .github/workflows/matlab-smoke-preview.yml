@@ -5,10 +5,15 @@
 # (the Rust/qmrust adapter), which does not exist yet. This exists only to prove the
 # MATLAB lane runs for real in Actions today, on a fast, closed-form, non-iterative
 # model (b1_dam: two SPGR images, one arccos, no optimizer) rather than waiting for
-# the full pipeline. workflow_dispatch only, so it never competes with real triggers.
+# the full pipeline. Narrow push trigger (fires only when this file changes) plus
+# workflow_dispatch, mirroring preview.yml's own pattern, since workflow_dispatch is only
+# usable once a workflow exists on the default branch, which this one deliberately does not.
 name: matlab smoke (temporary preview)
 
 on:
+  push:
+    branches: [implement-benchmark-harness]
+    paths: [".github/workflows/matlab-smoke-preview.yml"]
   workflow_dispatch: {}
 
 permissions:
