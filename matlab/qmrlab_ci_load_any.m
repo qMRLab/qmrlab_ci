@@ -16,6 +16,9 @@ function arr = qmrlab_ci_load_any(dataRoot, dataset, name)
         % in a printing utility rather than a type problem in the data.
         arr = double(s.(f{1}));
     else
-        arr = double(load_nii_data(p));
+        % NOT load_nii_data: it reorients each volume by that file's affine, so two
+        % inputs to one fit can arrive in different storage orders -- and the rule
+        % may itself differ across the 14 qMRLab versions this benchmark measures.
+        arr = qmrlab_ci_read_nii(p);
     end
 end
