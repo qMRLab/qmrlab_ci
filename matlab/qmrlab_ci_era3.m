@@ -29,6 +29,7 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
             end
 
             maps = {};
+            resolved = {};
             names = qmrlab_ci_map_names(modelId);
             for jj = 1:numel(names)
                 nm = names{jj};
@@ -45,6 +46,7 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
                 if ~strcmp(src, nm)
                     fprintf('  %s/%s <- FitResults.%s\n', modelId, nm, src);
                 end
+                resolved{end+1} = src;  %#ok<AGROW>
                 rel = fullfile('maps', modelId, [nm '.nii.gz']);
                 qmrlab_ci_write_nii(fullfile(outRoot, rel), FitResults.(src));
                 maps{end+1} = struct('name', nm, ...
@@ -52,10 +54,14 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
                                      'path', strrep(rel, '\', '/'));  %#ok<AGROW>
             end
 
+            % Falls back to the size of the first map ACTUALLY produced. Using the
+            % canonical name here was the bug: for b1_dam/b1_afi/mt_sat the canonical
+            % name is not a FitResults field, and those three are exactly the models
+            % whose archives ship no Mask, so this is their only path.
             if isfield(data, 'Mask') && ~isempty(data.Mask)
                 nVox = nnz(data.Mask);
             else
-                nVox = numel(FitResults.(names{1}));
+                nVox = numel(FitResults.(resolved{1}));
             end
 
             % jsonencode() writes a 1-element numeric array as a bare scalar, which
