@@ -350,11 +350,27 @@ conventions may have shifted between versions.
 
 Therefore:
 
-- **Hashes are SHA-256 over the raw decompressed voxel bytes**, as the software
-  produced them. Byte-equivalence then means "bit-identical output", uncontaminated by
-  a conversion multiply the harness introduced. Hashing the *file* would be wrong
-  regardless: NIfTI headers and `.mat` files carry timestamps and descriptions that
-  differ every run.
+- **Hashes are SHA-256 over the canonicalized voxel values**, in the unit the software
+  produced. Byte-equivalence then means "identical numeric output", uncontaminated by
+  a conversion multiply the harness introduced.
+
+  Hashing the *file* would be wrong: NIfTI headers and `.mat` files carry timestamps
+  and descriptions that differ every run. But hashing the raw data block would be wrong
+  too, and less obviously so — qMRLab writes `float32` while qmrust may write `float64`,
+  and either may set `scl_slope`/`scl_inter`. Two implementations producing numerically
+  identical maps would then hash differently, so the signal would be measuring
+  serializers rather than fits. The canonicalization is therefore:
+
+  1. read the voxel array and apply `scl_slope` / `scl_inter` per the NIfTI spec
+     (a zero slope means no scaling);
+  2. widen to `float64` — exact from `float32`, so nothing is lost or invented;
+  3. replace every NaN with the single quiet-NaN pattern `0x7ff8000000000000`, since
+     NaN payloads are not required to be reproducible;
+  4. serialize little-endian in C order, and SHA-256 that.
+
+  Signed zero is deliberately **not** canonicalized: `-0.0` and `+0.0` hash differently
+  because that difference is real and worth seeing. The rule is implemented once, in
+  `analyze`, so every target is hashed identically.
 - **Statistics are computed in the canonical unit** declared in `models/<id>.yml`, over
   the repo-owned mask, so they are comparable across softwares.
 
