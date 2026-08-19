@@ -1,2 +1,7 @@
 .DS_Store
 .superpowers/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+osf-data/
+site/
