@@ -2,6 +2,6 @@ id: mt_sat
 dataset: mtsat
 mask: masks/mt_sat.nii.gz
 maps:
-  - {name: MTsat, unit: au}
+  - {name: MTsat, unit: percent}
   - {name: T1,    unit: s}
   - {name: MTR,   unit: percent}
