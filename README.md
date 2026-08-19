@@ -67,6 +67,7 @@ compare serializers rather than fits. See `harness/measure.py`.
 | `data/sources.yml` | OSF archives pinned by version **and** SHA-256 |
 | `harness/` | Every derived number: hashes, statistics, comparisons, site, drift log |
 | `matlab/` | Three era drivers plus a harness-owned NIfTI writer |
+| `.github/workflows/smoke.yml` | Push/PR gate: harness tests plus one MATLAB target per era |
 | `docs/superpowers/` | Design spec and implementation plan |
 
 ## Adding a target
@@ -77,6 +78,25 @@ version of an existing software needs no workflow edit.
 A target declares its `lane` — the toolchain it needs (`matlab`, `rust`, and reserved
 `python`, `julia`, `r`). A new *language* does need a new job in the workflow, because each
 ecosystem has its own setup and cache action.
+
+## Continuous integration
+
+The full benchmark runs weekly. Without a faster check, a harness bug introduced on
+Monday is invisible until the following Tuesday. `.github/workflows/smoke.yml` runs on
+every push and pull request instead: the Python test suite, then one MATLAB target per
+era — `qmrlab@V1` (era 1), `qmrlab@v2.0.5` (era 2), both pinned to **R2021a**, and
+`qmrlab@v3.0.0` (era 3) on R2026a. R2021a is the floor `setup-matlab@v2` supports and
+governs 11 of the 14 MATLAB targets, so smoke is what actually exercises that pin rather
+than assuming it works.
+
+Each leg fits one model, validates the resulting record against the schema, and — for
+`b1_dam`, which is closed-form — asserts near-exact agreement with the archive's own
+`FitResults`. `qmt_spgr` on `V1` is asserted only for a valid, complete record: `V1`'s
+model equation genuinely differs from later eras' (v3.0.0 multiplies free-pool
+saturation by `cos(alpha)`; `V1` does not), so comparing it against the shared archive
+reference would misreport a real modeling difference as a bug. A final job runs
+`harness.analyze` and `harness.site` over the three legs' real adapter output, so the
+analysis stage is exercised on every push too, not only during the weekly run.
 
 ## Three qMRLab API eras
 

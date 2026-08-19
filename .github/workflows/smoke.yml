@@ -1,0 +1,209 @@
+# The fast, always-on gate. Runs on every push and pull request so a harness bug
+# introduced today is caught today, not on next Tuesday's weekly benchmark run.
+#
+# Three legs, one per qMRLab API era, each pinned to the MATLAB release benchmark.yml
+# actually uses for that era: era 1 (qmrlab@V1) and era 2 (qmrlab@v2.0.5) on R2021a,
+# era 3 (qmrlab@v3.0.0) on R2026a. R2021a governs 11 of the 14 MATLAB targets and had
+# never been exercised in Actions before this workflow -- everything else was verified
+# only on R2026a, the one release available on the development machine.
+name: smoke
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  harness-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests/ -v
+
+  smoke:
+    needs: harness-tests
+    runs-on: ubuntu-latest
+    strategy:
+      # One era's MATLAB pin failing to install must never hide the other two legs'
+      # results -- that would turn "R2021a is broken" into "smoke is red", no era
+      # attached.
+      fail-fast: false
+      matrix:
+        include:
+          - id: qmrlab@V1
+            ref: V1
+            era: 1
+            release: R2021a
+            model: qmt_spgr
+          - id: qmrlab@v2.0.5
+            ref: v2.0.5
+            era: 2
+            release: R2021a
+            model: b1_dam
+          - id: qmrlab@v3.0.0
+            ref: v3.0.0
+            era: 3
+            release: R2026a
+            model: b1_dam
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+
+      - name: Fetch and verify the canonical inputs
+        run: python -m scripts.fetch_data --out osf-data
+
+      - name: Clone qMRLab at ${{ matrix.ref }}
+        run: git clone --depth 1 --branch ${{ matrix.ref }} https://github.com/qMRLab/qMRLab.git qMRLab
+
+      - name: Run target setup.sh if present
+        run: |
+          if [ -f "targets/${{ matrix.id }}/setup.sh" ]; then
+            bash "targets/${{ matrix.id }}/setup.sh"
+          else
+            echo "no setup.sh for ${{ matrix.id }}"
+          fi
+
+      # Task 14's review flagged that the drivers take `models` as an unvalidated
+      # cellstr: a single-element list built carelessly from a GitHub Actions
+      # expression degrades to a bare 'b1_dam' instead of {'b1_dam'}, which breaks
+      # `models{ii}` in a way that reads as a driver bug rather than a caller bug.
+      # Every leg here is single-model, so this is exactly the case that gets it
+      # wrong. Built and verified once, in this step, then the SAME string (not a
+      # reconstruction of it) is what run-command below actually executes.
+      - name: Build the MATLAB command, asserting models arrives as a cellstr
+        id: cmd
+        run: |
+          CMD="addpath(genpath('qMRLab')); addpath('matlab'); qmrlab_ci_era${{ matrix.era }}('osf-data', 'results/${{ matrix.id }}', '${{ matrix.id }}', '${{ matrix.ref }}', '${{ matrix.release }}', {'${{ matrix.model }}'}, '{\"default\": 5, \"qmt_spgr\": 1}');"
+          echo "$CMD"
+          case "$CMD" in
+            *"{'${{ matrix.model }}'}"*)
+              echo "models reaches MATLAB as a cellstr: {'${{ matrix.model }}'}" ;;
+            *)
+              echo "::error::models did NOT render as a cellstr -- got: $CMD"
+              exit 1 ;;
+          esac
+          {
+            echo 'cmd<<SMOKE_CMD_EOF'
+            echo "$CMD"
+            echo 'SMOKE_CMD_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: matlab-actions/setup-matlab@v2
+        with:
+          release: ${{ matrix.release }}
+          products: |
+            Image_Processing_Toolbox
+            Optimization_Toolbox
+            Statistics_and_Machine_Learning_Toolbox
+
+      # MATLAB is invoked ONLY through matlab-actions/run-command. setup-matlab installs
+      # MATLAB but does not license it; licensing happens inside the matlab-batch wrapper
+      # that run-command invokes. Never shell out to a `matlab` binary directly.
+      - uses: matlab-actions/run-command@v2
+        with:
+          command: ${{ steps.cmd.outputs.cmd }}
+
+      - name: Show the record this leg produced
+        run: cat "results/${{ matrix.id }}/records/${{ matrix.model }}.json"
+
+      - name: Validate the record against the real schema
+        run: |
+          python - <<PY
+          import sys
+          from harness.record import load_adapter_record
+
+          rec = load_adapter_record("results/${{ matrix.id }}/records/${{ matrix.model }}.json")
+          print(f"status={rec.status} maps={[m['name'] for m in rec.maps]} repeats={rec.timing.get('repeats')}")
+          if rec.status != "ok":
+              sys.exit(f"expected status ok, got {rec.status!r}: {rec.error}")
+
+          expected = {
+              "qmt_spgr": {"F", "kr", "R1f", "R1r", "T2f", "T2r"},
+              "b1_dam": {"B1map"},
+          }["${{ matrix.model }}"]
+          got = {m["name"] for m in rec.maps}
+          if got != expected:
+              sys.exit(f"expected maps {sorted(expected)}, got {sorted(got)}")
+          print("record OK: status=ok, schema-valid, all maps present")
+          PY
+
+      # b1_dam is closed form -- an arc-cosine of a signal ratio, no optimizer -- so
+      # both its legs (era 2 and era 3) must reproduce the archive's own FitResults
+      # essentially exactly. A failure here is a real defect, never optimizer noise.
+      #
+      # qmt_spgr on V1 has NO fair archive reference: V1's model equation genuinely
+      # differs from v3.0.0's (v3 multiplies free-pool saturation by cos(alpha); V1
+      # does not -- a real published finding, not a defect). So the V1 leg is asserted
+      # only above: status ok, six maps, schema-valid. It is never compared here.
+      - name: Both b1_dam legs must reproduce the shipped reference
+        if: matrix.model == 'b1_dam'
+        run: |
+          python - <<'PY'
+          from harness.compare import compare_maps
+          from harness.nifti import read_nifti
+
+          ours = read_nifti("results/${{ matrix.id }}/maps/b1_dam/B1map.nii.gz").values
+          ref = read_nifti("osf-data/b1_dam/FitResults/B1map.nii.gz").values
+          mask = read_nifti("masks/b1_dam.nii.gz").values
+          result = compare_maps(ours, ref, mask, rel_tol=0.001)
+          print(result)
+          assert result["frac_within"] is not None and result["frac_within"] > 0.99, result
+          assert result["pearson_r"] is not None and result["pearson_r"] > 0.999, result
+          print("agreement OK: frac_within > 0.99 and pearson_r > 0.999")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.id }}
+          path: results/${{ matrix.id }}/
+          if-no-files-found: error
+
+  analyze-runs:
+    needs: smoke
+    # always(): a partial set of legs (e.g. one era's MATLAB pin failing to install)
+    # is the normal degraded case here, not a reason to skip proving the analysis
+    # stage still consumes whatever real adapter output did land.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+
+      # Downloaded by artifact name, one subdirectory per target -- matching results/<id>/
+      # exactly, since each leg uploaded its own results/<id>/ tree as an artifact named
+      # <id>. Masks and models come from the checkout itself; analyze needs no OSF fetch.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "qmrlab@*"
+          path: results
+      - run: find results -maxdepth 3 -type d | sort
+
+      - name: Run harness.analyze over the real per-leg adapter output
+        run: |
+          python -m harness.analyze --results-dir results --root . --out site/data/results.json
+          python - <<'PY'
+          import json
+          doc = json.load(open("site/data/results.json"))
+          records = doc["records"]
+          print(f"{len(records)} record(s) analyzed")
+          for r in records:
+              print(f"  {r['target']:16s} {r['model']:10s} status={r['status']}")
+          assert len(records) >= 1, "analyze produced no records from real adapter output"
+          PY
+
+      - name: Run harness.site over the analyzed results
+        run: python -m harness.site --results site/data/results.json --out-dir site
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-site
+          path: site/

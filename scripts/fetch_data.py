@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import pathlib
 import shutil
+import time
 import urllib.request
 import zipfile
 
@@ -46,7 +47,21 @@ def main(argv=None) -> int:
     for source in load_sources(root).values():
         archive = out / f"{source.name}.zip"
         print(f"fetching {source.name} from {source.url}")
-        urllib.request.urlretrieve(source.url, archive)
+        # Bounded retry on the DOWNLOAD only. Observed live in CI: OSF returned HTTP 500 on
+        # one archive and killed the entire weekly run before a single fit -- all 15 targets
+        # lost to a transient upstream hiccup. Verification is deliberately OUTSIDE the retry:
+        # a checksum mismatch is a corruption signal and one of only two failures permitted to
+        # abort a run (spec §10). Retry the transport, never the verification.
+        for attempt in range(1, 4):
+            try:
+                urllib.request.urlretrieve(source.url, archive)
+                break
+            except OSError as exc:
+                if attempt == 3:
+                    raise
+                delay = 2 ** attempt
+                print(f"  attempt {attempt} failed ({exc}); retrying in {delay}s")
+                time.sleep(delay)
         verify(archive, source.sha256, source.bytes)
         print(f"  verified {source.sha256[:12]}…")
 
