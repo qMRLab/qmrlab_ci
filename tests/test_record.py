@@ -50,3 +50,31 @@ def test_timing_repeat_count_must_match_the_samples_recorded():
 
     with pytest.raises(RecordError, match="repeats"):
         AdapterRecord.from_dict(bad)
+
+
+def test_maps_as_a_dict_is_rejected():
+    bad = {**OK, "maps": {"name": "T1", "unit": "s", "path": "maps/vfa_t1/T1.nii.gz"}}
+
+    with pytest.raises(RecordError, match="maps"):
+        AdapterRecord.from_dict(bad)
+
+
+def test_a_map_entry_that_is_not_an_object_is_rejected():
+    bad = {**OK, "maps": ["T1"]}
+
+    with pytest.raises(RecordError, match="maps"):
+        AdapterRecord.from_dict(bad)
+
+
+def test_an_ok_record_with_no_maps_is_rejected():
+    bad = {**OK, "maps": []}
+
+    with pytest.raises(RecordError, match="map"):
+        AdapterRecord.from_dict(bad)
+
+
+def test_a_failed_record_with_maps_is_rejected():
+    bad = {**OK, "status": "failed", "error": "install failed: patch rejected"}
+
+    with pytest.raises(RecordError, match="maps"):
+        AdapterRecord.from_dict(bad)

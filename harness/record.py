@@ -38,11 +38,16 @@ class AdapterRecord:
         if status not in STATUSES:
             raise RecordError(f"status must be one of {STATUSES}, got {status!r}")
 
-        maps = tuple(doc.get("maps") or ())
-        for m in maps:
+        maps_raw = doc.get("maps") or ()
+        if not isinstance(maps_raw, (list, tuple)):
+            raise RecordError(f"'maps' must be a list, got {type(maps_raw).__name__}")
+        maps = tuple(maps_raw)
+        for i, m in enumerate(maps):
+            if not isinstance(m, dict):
+                raise RecordError(f"maps[{i}]: must be an object, got {type(m).__name__}")
             for field in ("name", "unit", "path"):
                 if field not in m:
-                    raise RecordError(f"map {m.get('name', '?')!r}: missing {field!r}")
+                    raise RecordError(f"maps[{i}] ({m.get('name', '?')!r}): missing {field!r}")
 
         timing = dict(doc.get("timing") or {})
         if status == "ok":
@@ -56,6 +61,13 @@ class AdapterRecord:
         error = doc.get("error")
         if status == "failed" and not error:
             raise RecordError("a failed record must carry an 'error' explaining why")
+
+        # An 'ok' record that produced nothing is not ok, and a hole or a failure that
+        # carries maps is telling two different stories about the same run.
+        if status == "ok" and not maps:
+            raise RecordError("an 'ok' record must carry at least one map")
+        if status in ("failed", "not_applicable") and maps:
+            raise RecordError(f"a {status!r} record must not carry maps")
 
         return cls(
             target=doc["target"], software=doc["software"], version=doc["version"],
