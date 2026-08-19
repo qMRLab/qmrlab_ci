@@ -69,9 +69,10 @@ and drive logic lives per-target (§5) rather than in shared code.
 `FitData.m` at all — it is a GUI application (`qMTLab.m` + `qMTLab.fig`) with three
 qMT method directories beside it. It contributes exactly **one** model, `qmt_spgr`, and
 driving it headlessly means calling into `SPGR/` directly with hand-constructed
-protocol and fit-option structs. It is scoped in deliberately, but it is archaeology,
-and it is the target most likely to end a run as `status: failed`. Nothing else depends
-on it: it is one directory, and its failure is one red cell (§10).
+protocol and fit-option structs. It is scoped in deliberately — driven headless, on R2021a, against the
+same canonical qMT input as every other target (§6.1) — but it is archaeology, and it
+is the target most likely to end a run as `status: failed`. Nothing else depends on it:
+it is one directory, and its failure is one red cell (§10).
 
 ### 2.4 Model availability by version
 
@@ -251,21 +252,38 @@ left to the thing being measured.
 `data/sources.yml` pins each OSF archive by URL-with-`?version=` **and SHA-256**. The
 URLs are lifted from qmrust's `ci/datasets.sh`, which already pins versions:
 
-| Dataset | URL |
-|---|---|
-| ir | `https://osf.io/cmg9z/download?version=3` |
-| qmt | `https://osf.io/pzqyn/download?version=2` |
-| mono_t2 | `https://osf.io/kujp3/download?version=3` |
-| mtr | `https://osf.io/erm2s/download?version=2` |
-| mtsat | `https://osf.io/c5wdb/download?version=4` |
-| vfa_t1 | `https://osf.io/7wcvh/download?version=3` |
-| b1_dam | `https://osf.io/mw3sq/download?version=3` |
-| b1_afi | `https://osf.io/csjgx/download?version=9` |
+| Dataset | URL | SHA-256 | Bytes |
+|---|---|---|---|
+| ir | `https://osf.io/cmg9z/download?version=3` | `7e9ac1ce54a93352e1504c4244b43a524746cf00b33f60b23b3d11f0572beac7` | 458234 |
+| qmt | `https://osf.io/pzqyn/download?version=2` | `dc0ad3c95bb2e3f0c40f98aa844c4956c83e8991364ef386a67de140df5af759` | 805750 |
+| mono_t2 | `https://osf.io/kujp3/download?version=3` | `671354b724d20f8f3a6b4a05b7a4433ba00068edb87eaf40b946b6544eb96a7d` | 4817256 |
+| mtr | `https://osf.io/erm2s/download?version=2` | `2550cfd14b1bcaae6e47ae79066f7452a02a31c23d87429cdcc47df649766d3c` | 2460374 |
+| mtsat | `https://osf.io/c5wdb/download?version=4` | `23c212fe7852e77e7b972dd512a68c12be2fb26c3a6e0a229d87fef211784c5e` | 55020114 |
+| vfa_t1 | `https://osf.io/7wcvh/download?version=3` | `62adf68a4ccfb15e4e01e5ff5440ce3faa78d35c346a022c027113ab8621ab43` | 294729 |
+| b1_dam | `https://osf.io/mw3sq/download?version=3` | `60d76d686319083fbea6d49576580461e2578c62712917494674940bce987e5c` | 92617 |
+| b1_afi | `https://osf.io/csjgx/download?version=9` | `8762467cc55c340ebabbe4fa4685289ff74e75560e6c8ef58aed78486cdf3a1a` | 9020541 |
+
+Checksums captured 2026-08-19 and to be committed verbatim in `data/sources.yml`. A
+mismatch aborts the run (§10).
 
 `prepare-data` verifies both URL pin and checksum, unpacks into one canonical input
 tree, adds the repo-owned masks, and uploads it as a single artifact that every fit job
 downloads. A silent OSF re-upload fails the run loudly rather than quietly shifting
 every number.
+
+**Every target uses this same input, V1 included.** The question arose whether the
+2016-era qMTLab target needs an era-appropriate qMT dataset rather than the current
+pin. It does not, and this was checked rather than assumed: the `qmt` archive has
+exactly two OSF versions, v1 (2017-11-28) and v2 (2018-01-10), and their input files —
+`MTdata.mat`, `Mask.mat`, `B0map.mat`, `B1map.mat`, `R1map.mat` — are **byte-identical
+by per-file SHA-256**. v2 differs only by adding a `FitResults/` directory. The oldest
+available qMT data and the currently pinned data are the same bytes, so V1 stays fully
+comparable and §3.3's one-input rule holds without exception.
+
+Should a future target ever genuinely require a different input vintage, that target's
+outputs would not be comparable to the rest, and the site would have to mark it as
+such. No target requires it today, and the design does not provide for it — that is a
+deliberate omission, not an oversight.
 
 ### 6.2 Masks are reproducible, not magic
 
