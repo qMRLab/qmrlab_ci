@@ -1,8 +1,8 @@
-"""Turn declared targets into the two GitHub Actions job matrices.
+"""Turn declared targets into GitHub Actions job matrices split by toolchain lane.
 
 Split by lane rather than emitted as one matrix with conditional steps: the MATLAB
-lane needs setup-matlab and run-command, the native lane needs neither, and a job
-full of `if:` guards hides which steps actually run for a given target.
+lane needs setup-matlab and run-command, the rust lane needs cargo and Rust toolchain,
+and a job full of `if:` guards hides which steps actually run for a given target.
 """
 from __future__ import annotations
 
