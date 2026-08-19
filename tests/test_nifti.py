@@ -28,3 +28,12 @@ def test_zero_slope_means_no_scaling(tmp_path):
     write_nifti(p, [3.0, 4.0], shape=(2,), scl_slope=0.0, scl_inter=0.0)
 
     np.testing.assert_allclose(read_nifti(p).values, [3.0, 4.0])
+
+
+def test_zero_slope_disables_the_intercept_too(tmp_path):
+    """A zero slope disables the whole transform. Applying the intercept anyway would
+    mean multiplying the data by zero, which is precisely what the spec forbids."""
+    p = tmp_path / "m.nii.gz"
+    write_nifti(p, [3.0, 4.0], shape=(2,), scl_slope=0.0, scl_inter=5.0)
+
+    np.testing.assert_allclose(read_nifti(p).values, [3.0, 4.0])

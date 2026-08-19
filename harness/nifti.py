@@ -32,7 +32,13 @@ class Nifti:
         multiply by zero.
         """
         out = self.raw.astype(np.float64)
-        if self.scl_slope not in (0.0, 1.0) or self.scl_inter != 0.0:
+        # A zero slope means "unset" and disables the transform ENTIRELY -- including
+        # any intercept. Folding this into the condition below instead would multiply
+        # by zero whenever scl_inter is nonzero, which is the one thing the spec
+        # explicitly forbids.
+        if self.scl_slope == 0.0:
+            return out
+        if self.scl_slope != 1.0 or self.scl_inter != 0.0:
             out = self.scl_slope * out + self.scl_inter
         return out
 
