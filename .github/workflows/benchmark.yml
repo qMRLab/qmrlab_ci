@@ -24,6 +24,15 @@ permissions:
   pages: write
   id-token: write
 
+# Pages deployments serialise on the github-pages environment, so two overlapping runs
+# cancel each other mid-matrix. Observed live: a push and a workflow_dispatch landed ten
+# seconds apart and the second run was cancelled mid-flight -- prepare-data, fit-matlab
+# and fit-rust all killed, publish failed. Queue rather than cancel: a benchmark run that
+# got as far as fitting has real MATLAB compute in it worth finishing.
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   prepare-data:
     runs-on: ubuntu-latest
@@ -93,30 +102,6 @@ jobs:
           script="targets/${{ matrix.target.id }}/setup.sh"
           if [ -x "$script" ]; then bash "$script"; else echo "no setup.sh"; fi
 
-      # Task 14's review flagged that the drivers take `models` as an unvalidated
-      # cellstr: a single-element list built carelessly from a GitHub Actions
-      # expression degrades to a bare string instead of {'a'}, breaking `models{ii}`
-      # in a way that reads as a driver bug rather than a caller bug. Built and
-      # verified once, in this step, then the SAME string is what run-command below
-      # actually executes -- copied from smoke.yml's proven approach.
-      - name: Build the MATLAB command, asserting models arrives as a cellstr
-        id: cmd
-        run: |
-          CMD="addpath(genpath('qMRLab')); addpath('matlab'); qmrlab_ci_era${{ matrix.target.era }}('osf-data', 'results/${{ matrix.target.id }}', '${{ matrix.target.id }}', '${{ matrix.target.version }}', '${{ matrix.target.matlab_release }}', {'${{ join(matrix.target.models, ''',''') }}'}, '${{ matrix.target.repeats_json }}');"
-          echo "$CMD"
-          case "$CMD" in
-            *"{'"*"'}"*)
-              echo "models reaches MATLAB as a cellstr" ;;
-            *)
-              echo "::error::models did NOT render as a cellstr -- got: $CMD"
-              exit 1 ;;
-          esac
-          {
-            echo 'cmd<<BENCH_CMD_EOF'
-            echo "$CMD"
-            echo 'BENCH_CMD_EOF'
-          } >> "$GITHUB_OUTPUT"
-
       - uses: matlab-actions/setup-matlab@v2
         with:
           release: ${{ matrix.target.matlab_release }}
@@ -125,9 +110,34 @@ jobs:
       # MUST go through run-command. setup-matlab installs MATLAB but does not license
       # it; licensing happens inside the matlab-batch wrapper this action invokes.
       # Calling the matlab binary directly fails with "Unable to find a license".
+      #
+      # repeats_json travels via env + getenv(), NOT interpolated into a bash-built
+      # command string. An earlier version assigned the command into a bash
+      # double-quoted variable; the JSON's inner `"` characters silently closed and
+      # reopened that bash string, stripping them, so MATLAB's jsondecode received
+      # the invalid `{default: 5, qmt_spgr: 1}` and every one of the 14 targets
+      # failed identically -- while a cellstr guard that only checked for single
+      # quotes reported the (already-broken) command as fine. env passing preserves
+      # the value byte for byte. models still reaches MATLAB as a cellstr {'a','b'}
+      # because the command text itself supplies the literal braces/quotes around
+      # join()'s output -- it is YAML text handed straight to the action, never
+      # parsed by a shell. Both are echoed below so the log proves it before the fit.
       - uses: matlab-actions/run-command@v2
+        env:
+          QMRLAB_CI_REPEATS: ${{ matrix.target.repeats_json }}
         with:
-          command: ${{ steps.cmd.outputs.cmd }}
+          command: |
+            addpath(genpath('qMRLab'));
+            addpath('matlab');
+            repeatsJson = getenv('QMRLAB_CI_REPEATS');
+            models = {'${{ join(matrix.target.models, ''',''') }}'};
+            fprintf('QMRLAB_CI_REPEATS=%s\n', repeatsJson);
+            disp(jsondecode(repeatsJson));
+            fprintf('models is cellstr: %d, contents: %s\n', iscellstr(models), strjoin(models, ', '));
+            qmrlab_ci_era${{ matrix.target.era }}('osf-data', ...
+              'results/${{ matrix.target.id }}', '${{ matrix.target.id }}', ...
+              '${{ matrix.target.version }}', '${{ matrix.target.matlab_release }}', ...
+              models, repeatsJson);
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -190,7 +200,26 @@ jobs:
       - run: |
           python -m harness.analyze --results-dir results --root . \
             --out site/data/results.json
-          python -m harness.site --results site/data/results.json --out-dir site
+      # if: always() upstream means a partial result set is the normal case -- but
+      # "partial" must not silently include "none". A run where every target died
+      # must not produce a green analyze and a published site that overwrites a good
+      # previous site with an empty matrix, nor a drift-log entry with no digests.
+      # This check lives here, not in harness/analyze.py, because analyze-with-no-
+      # input is legitimately valid to call directly (e.g. from unit tests).
+      - name: Refuse to publish a total-failure run (zero records)
+        run: |
+          python - <<'PY'
+          import json, sys
+          doc = json.load(open("site/data/results.json"))
+          n = len(doc["records"])
+          print(f"{n} record(s) analyzed")
+          if n == 0:
+              print("::error::analyze produced ZERO records -- every target failed. "
+                    "This is a total-failure run, not a partial one; refusing to "
+                    "publish an empty site or append an empty entry to the drift log.")
+              sys.exit(1)
+          PY
+      - run: python -m harness.site --results site/data/results.json --out-dir site
       # Supplies steps.pages.outputs.base_url. Needed because qMRLab serves org
       # project pages from the custom domain qmrlab.org, NOT qmrlab.github.io, so
       # a hand-built <owner>.github.io/<repo> URL would 404 forever and the drift
