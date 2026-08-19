@@ -430,8 +430,12 @@ repeats, or switching the headline metric to time-per-voxel, requires no schema 
 
 ## 9. Analysis, site, and drift
 
-`analyze` is one Python package, stdlib-first — qmrust's `compare_maps.py` demonstrates
-that reading NIfTI needs only `gzip` and `struct`. It is deliberately **lane-agnostic
+`analyze` is one Python package. NIfTI parsing is stdlib (`gzip` + `struct`), as
+qmrust's `compare_maps.py` demonstrates; the numerics use `numpy` and config loading
+uses `PyYAML`. qmrust keeps `compare_maps.py` dependency-free because it must run in a
+bare image — `analyze` runs on an ordinary runner where `pip install` is available, and
+hand-rolling percentiles and masked reductions over a 55 MB dataset would be slower and
+more error-prone than the dependency is worth. It is deliberately **lane-agnostic
 and language-agnostic**: it reads maps and JSON records and knows nothing about MATLAB
 or Rust. That is the seam a future software plugs into.
 
