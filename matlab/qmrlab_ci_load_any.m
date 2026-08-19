@@ -10,7 +10,11 @@ function arr = qmrlab_ci_load_any(dataRoot, dataset, name)
     if endsWith(name, '.mat')
         s = load(p);
         f = fieldnames(s);
-        arr = s.(f{1});
+        % double(), matching the NIfTI branch. qMRLab's voxelwise fits fail at EVERY
+        % voxel on non-double input, and the failure is close to invisible: the error
+        % reporter (cprintf) falls over while reporting it, so what surfaces is a crash
+        % in a printing utility rather than a type problem in the data.
+        arr = double(s.(f{1}));
     else
         arr = double(load_nii_data(p));
     end
