@@ -39,6 +39,18 @@ def test_all_eight_archives_are_checksummed():
         assert source.bytes > 0
 
 
+def test_map_missing_a_unit_is_a_config_error_not_a_keyerror(tmp_path):
+    """A schema violation aborts the whole run, so it must arrive as the declared
+    error type with a location — never as a bare KeyError from dict indexing."""
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "broken.yml").write_text(
+        "id: broken\ndataset: ir\nmask: masks/broken.nii.gz\nmaps: [{name: T1}]\n"
+    )
+
+    with pytest.raises(ConfigError, match="maps\\[0\\].*unit"):
+        load_models(tmp_path)
+
+
 def test_model_missing_a_required_field_is_a_config_error(tmp_path):
     (tmp_path / "models").mkdir()
     (tmp_path / "models" / "broken.yml").write_text(

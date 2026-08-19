@@ -54,7 +54,17 @@ def load_models(root: pathlib.Path) -> dict[str, ModelSpec]:
             id=_require(doc, "id", where),
             dataset=_require(doc, "dataset", where),
             mask=_require(doc, "mask", where),
-            maps=tuple(MapSpec(name=m["name"], unit=m["unit"]) for m in maps),
+            # Routed through _require, not raw indexing: a malformed map must raise
+            # ConfigError like every other schema violation. A bare KeyError escaping
+            # here is an unhandled crash with no location, and this is one of only two
+            # failures allowed to abort a whole run — it has to say where and what.
+            maps=tuple(
+                MapSpec(
+                    name=_require(m, "name", f"{where}: maps[{i}]"),
+                    unit=_require(m, "unit", f"{where}: maps[{i}]"),
+                )
+                for i, m in enumerate(maps)
+            ),
         )
         if spec.id != path.stem:
             raise ConfigError(f"{where}: id {spec.id!r} does not match filename")
