@@ -9,7 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 def test_matrices_are_split_by_lane():
     m = build_matrices(load_targets(ROOT))
 
-    assert {e["id"] for e in m["native"]} == {"qmrust@main"}
+    assert {e["id"] for e in m["rust"]} == {"qmrust@main"}
     assert len(m["matlab"]) == 14
 
 
@@ -37,3 +37,14 @@ def test_entries_are_json_safe_scalars():
     import json
 
     json.dumps(build_matrices(load_targets(ROOT)))
+
+
+def test_every_known_lane_has_a_key_even_when_empty():
+    """The workflow guards each fit job on `<lane> != '[]'`, so a lane with no targets
+    must still produce an empty list rather than a missing output."""
+    from harness.config import KNOWN_LANES
+
+    m = build_matrices(load_targets(ROOT))
+
+    assert set(m) == set(KNOWN_LANES)
+    assert m["python"] == []

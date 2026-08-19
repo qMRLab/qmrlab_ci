@@ -86,6 +86,13 @@ def load_sources(root: pathlib.Path) -> dict[str, SourceSpec]:
     return sources
 
 
+# A lane names the TOOLCHAIN a target needs, not merely "MATLAB or not". Each lane gets
+# its own job in benchmark.yml, because each ecosystem has its own setup and cache action:
+# a Rust target wants dtolnay/rust-toolchain + Swatinem/rust-cache, a Python one would want
+# actions/setup-python. So adding a LANGUAGE means adding a job; adding a target in a
+# language that already has a lane is still just adding a directory.
+KNOWN_LANES = ("matlab", "rust", "python", "julia", "r")
+
 MATLAB_PRODUCTS = (
     "Image_Processing_Toolbox",
     "Optimization_Toolbox",
@@ -117,8 +124,10 @@ def load_targets(root: pathlib.Path) -> dict[str, TargetSpec]:
         doc = yaml.safe_load(path.read_text()) or {}
         where = str(path)
         lane = _require(doc, "lane", where)
-        if lane not in ("matlab", "native"):
-            raise ConfigError(f"{where}: lane must be 'matlab' or 'native', got {lane!r}")
+        if lane not in KNOWN_LANES:
+            raise ConfigError(
+                f"{where}: lane must be one of {KNOWN_LANES}, got {lane!r}"
+            )
         source = _require(doc, "source", where)
         spec = TargetSpec(
             id=_require(doc, "id", where),

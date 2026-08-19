@@ -11,11 +11,13 @@ import json
 import os
 import pathlib
 
-from harness.config import TargetSpec, load_targets
+from harness.config import KNOWN_LANES, TargetSpec, load_targets
 
 
 def build_matrices(targets: dict[str, TargetSpec]) -> dict[str, list[dict]]:
-    out: dict[str, list[dict]] = {"matlab": [], "native": []}
+    # Every known lane gets a key even when empty, so the workflow can guard a job with
+    # `if: needs.plan.outputs.<lane> != '[]'` instead of failing on a missing output.
+    out: dict[str, list[dict]] = {lane: [] for lane in KNOWN_LANES}
     for target in targets.values():
         entry = {
             "id": target.id,

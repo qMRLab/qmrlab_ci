@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matlab: ${{ steps.gen.outputs.matlab }}
-      native: ${{ steps.gen.outputs.native }}
+      rust: ${{ steps.gen.outputs.rust }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -67,7 +67,7 @@ jobs:
           print("## Targets this benchmark will run\n")
           print("| Target | Lane | MATLAB | Era | Models |")
           print("|---|---|---|---|---|")
-          for lane in ("matlab", "native"):
+          for lane in ("matlab", "rust"):
               for e in m[lane]:
                   print(f"| `{e['id']}` | {lane} | {e.get('matlab_release','—')} "
                         f"| {e.get('era','—')} | {len(e['models'])} |")
@@ -94,13 +94,13 @@ jobs:
           echo "invoking qmrlab_ci_era${{ matrix.target.era }} over all models in one MATLAB session."
           echo "MATLAB is skipped here; the era drivers are plan Tasks 14-16."
 
-  fit-native:
+  fit-rust:
     needs: [prepare-data, plan]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.plan.outputs.native) }}
+        target: ${{ fromJSON(needs.plan.outputs.rust) }}
     steps:
       - name: What this leg will do
         run: |
@@ -112,7 +112,7 @@ jobs:
           echo "Plan Task 17."
 
   analyze:
-    needs: [plan, fit-matlab, fit-native]
+    needs: [plan, fit-matlab, fit-rust]
     # always(): partial results are the normal case, not an error.
     if: always()
     runs-on: ubuntu-latest

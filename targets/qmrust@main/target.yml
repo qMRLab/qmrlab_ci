@@ -1,7 +1,7 @@
 id: qmrust@main
 software: qmrust
 version: main
-lane: native
+lane: rust
 source: {repo: qMRLab/qmrust, ref: main}
 models: [qmt_spgr, inversion_recovery, vfa_t1, b1_dam, b1_afi, mono_t2, mt_ratio, mt_sat]
 repeats: {default: 5, qmt_spgr: 1}
