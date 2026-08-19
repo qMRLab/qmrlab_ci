@@ -88,3 +88,81 @@ def test_failed_targets_appear_in_records_without_maps(tmp_path):
 
     assert broken["status"] == "failed"
     assert broken["maps"] == []
+
+
+def _write_record(results, target_id, model, status, maps, **extra):
+    d = results / target_id / "records"
+    d.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "target": target_id, "software": "x", "version": "1", "model": model,
+        "status": status, "environment": {},
+        "timing": {"repeats": 1, "fit_seconds": [1.0], "n_voxels_fitted": 1},
+        "maps": maps,
+        **extra,
+    }
+    (d / f"{model}.json").write_text(json.dumps(doc))
+
+
+def test_an_undeclared_map_name_isolates_to_that_target_only(tmp_path):
+    """A map name absent from the catalog must not abort the whole run (spec §10)."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "good@1", [1.0, 2.0])
+    _mask(root, 2)
+
+    (results / "broken@1" / "maps" / "vfa_t1").mkdir(parents=True)
+    write_nifti(results / "broken@1" / "maps" / "vfa_t1" / "T1.nii.gz", [1.0, 2.0], shape=(2,))
+    _write_record(
+        results, "broken@1", "vfa_t1", "ok",
+        [{"name": "T99", "unit": "s", "path": "maps/vfa_t1/T1.nii.gz"}],
+    )
+
+    doc = analyze(results, root, models_root=ROOT, reference="good@1")
+    by_target = {r["target"]: r for r in doc["records"]}
+
+    assert by_target["good@1"]["status"] == "ok"
+    assert by_target["broken@1"]["status"] == "failed"
+    assert "analysis failed" in by_target["broken@1"]["error"]
+
+
+def test_a_missing_map_file_isolates_to_that_target_only(tmp_path):
+    """A map file absent from disk must not abort the whole run (spec §10)."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "good@1", [1.0, 2.0])
+    _mask(root, 2)
+
+    (results / "broken@1" / "maps" / "vfa_t1").mkdir(parents=True)
+    _write_record(
+        results, "broken@1", "vfa_t1", "ok",
+        [{"name": "T1", "unit": "s", "path": "maps/vfa_t1/MISSING.nii.gz"}],
+    )
+
+    doc = analyze(results, root, models_root=ROOT, reference="good@1")
+    by_target = {r["target"]: r for r in doc["records"]}
+
+    assert by_target["good@1"]["status"] == "ok"
+    assert by_target["broken@1"]["status"] == "failed"
+    assert "analysis failed" in by_target["broken@1"]["error"]
+
+
+def test_a_voxel_count_mismatch_isolates_to_that_target_only(tmp_path):
+    """A voxel count that disagrees with the mask must not abort the whole run (spec §10)."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "good@1", [1.0, 2.0])
+    _mask(root, 2)
+
+    (results / "broken@1" / "maps" / "vfa_t1").mkdir(parents=True)
+    write_nifti(
+        results / "broken@1" / "maps" / "vfa_t1" / "T1.nii.gz",
+        [1.0, 2.0, 3.0], shape=(3,),
+    )
+    _write_record(
+        results, "broken@1", "vfa_t1", "ok",
+        [{"name": "T1", "unit": "s", "path": "maps/vfa_t1/T1.nii.gz"}],
+    )
+
+    doc = analyze(results, root, models_root=ROOT, reference="good@1")
+    by_target = {r["target"]: r for r in doc["records"]}
+
+    assert by_target["good@1"]["status"] == "ok"
+    assert by_target["broken@1"]["status"] == "failed"
+    assert "analysis failed" in by_target["broken@1"]["error"]
