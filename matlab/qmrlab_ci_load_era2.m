@@ -26,6 +26,14 @@ function [data, Model] = qmrlab_ci_load_era2(dataRoot, modelId)
             data.SPGR    = qmrlab_ci_load_any(dataRoot, 'vfa_t1', 'VFAData.nii.gz');
             data.Mask    = qmrlab_ci_load_any(dataRoot, 'vfa_t1', 'Mask.nii.gz');
             data.B1map   = qmrlab_ci_load_any(dataRoot, 'vfa_t1', 'B1map.nii.gz');
+            % v2.0.5's own default protocol (Prot.SPGR.Mat = [4 0.025; 10 0.025;
+            % 20 0.025], three flip angles) does not match the canonical dataset,
+            % which has only two VFAData volumes -- FitData crashes with
+            % MATLAB:sizeDimensionsMustMatch. Overridden to match v3.0.0's vfa_t1.m
+            % default (Prot.VFAData.Mat = [3 0.015; 20 0.015]), which DOES match the
+            % archive, so this era is asked the same question as every other era
+            % rather than fit against v2.0.5's stale demo protocol.
+            Model.Prot.SPGR.Mat = [3 0.015; 20 0.015];
         case 'mt_sat'
             Model = MTSAT;
             data.MTw = qmrlab_ci_load_any(dataRoot, 'mtsat', 'MTw.nii.gz');

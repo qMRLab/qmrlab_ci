@@ -42,7 +42,7 @@ function qmrlab_ci_era1(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
         % assumed, so a surprise fails loudly instead of silently writing the wrong map.
         maps = {};
         resolved = {};
-        names = qmrlab_ci_map_names('qmt_spgr');
+        names = qmrlab_ci_map_names('qmt_spgr', 1);
         for jj = 1:numel(names)
             nm = names{jj};
             cands = qmrlab_ci_field_candidates('qmt_spgr', nm);

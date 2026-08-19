@@ -21,16 +21,11 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
         try
             [data, Model] = qmrlab_ci_load_era3(dataRoot, modelId);
 
-            times = zeros(1, n);
-            for r = 1:n
-                t0 = tic;
-                FitResults = FitData(data, Model, 0);
-                times(r) = toc(t0);
-            end
+            [times, FitResults] = qmrlab_ci_run_fits_isolated(data, Model, n);
 
             maps = {};
             resolved = {};
-            names = qmrlab_ci_map_names(modelId);
+            names = qmrlab_ci_map_names(modelId, 3);
             for jj = 1:numel(names)
                 nm = names{jj};
                 cands = qmrlab_ci_field_candidates(modelId, nm);
@@ -94,4 +89,36 @@ function qmrlab_ci_era3(dataRoot, outRoot, targetId, qmrlabVersion, matlabReleas
         end
         fprintf('%s / %s: %s\n', targetId, modelId, record.status);
     end
+end
+
+function [times, FitResults] = qmrlab_ci_run_fits_isolated(data, Model, n)
+%QMRLAB_CI_RUN_FITS_ISOLATED Repeat FitData(data, Model, 0) from an isolated temp dir.
+%
+%   qMRLab's FitData writes FitTempResults.mat into the CURRENT directory every 20
+%   voxels (Common/FitData.m). v3.0.0 deletes it on a normal completion, but skips
+%   that cleanup if FitData throws mid-loop; earlier eras never delete it at all
+%   (confirmed: v2.0.5's Common/FitData.m has the identical save with no matching
+%   delete). Running from a throwaway temp directory keeps it out of the checkout
+%   on every exit path; onCleanup restores the caller's directory and removes the
+%   temp one whether the fit finishes, throws, or is interrupted. This mirrors
+%   qmrlab_ci_era1.m's qmrlab_ci_era1_run_fits, which needs its own separate copy
+%   because V1's FitData takes a different argument list.
+    origDir = pwd;
+    tmpdir = tempname;
+    mkdir(tmpdir);
+    cd(tmpdir);
+    cleaner = onCleanup(@() qmrlab_ci_restore_dir(origDir, tmpdir));
+
+    times = zeros(1, n);
+    for r = 1:n
+        t0 = tic;
+        FitResults = FitData(data, Model, 0);
+        times(r) = toc(t0);
+    end
+end
+
+function qmrlab_ci_restore_dir(origDir, tmpdir)
+%QMRLAB_CI_RESTORE_DIR Return to ORIGDIR and remove TMPDIR. Runs on every exit path.
+    cd(origDir);
+    qmrlab_ci_rmtmp(tmpdir);
 end
