@@ -34,33 +34,64 @@ Eight, to start: `qmt_spgr`, `inversion_recovery`, `vfa_t1`, `b1_dam`, `b1_afi`,
 
 ### 2.2 Softwares and versions
 
-| Target | Notes |
-|---|---|
-| qMRLab v2.1.0 … v3.0.0 | Seven releases: 2.1.0, 2.2.0, 2.3.0, 2.4.0, 2.4.1, 2.5.0, 3.0.0 |
-| qMRLab `master` | Moves; recomputed every run |
-| qmrust `main` | Rust reimplementation |
+Fifteen targets: every published qMRLab release, plus `master`, plus qmrust.
 
-qMRLab v2.0.x and V1 (qMTLab) are **out of scope for phase 1**. They use a different
-model API (CamelCase `SPGR.m`, `InversionRecovery.m`, `B1_DAM.m`, `MTSAT.m`; no `src/`
-directory) and predate every MATLAB release reachable from CI. Adding them later is a
-second adapter plus, most likely, an Octave execution lane — additive under this
-design, not a rewrite.
+| Target | Ref | Notes |
+|---|---|---|
+| qMRLab V1 | `V1` | qMTLab, 2016. See §2.4 |
+| qMRLab v2.0.0 … v2.0.5 | `v2.0.0`, `2.0.1`, `2.0.2`, `v2.0.3`, `v2.0.5` | 2017 |
+| qMRLab v2.1.0 … v3.0.0 | `v2.1.0`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.4.1`, `v2.5.0`, `v3.0.0` | 2018–2026 |
+| qMRLab `master` | `master` | Moves; recomputed every run |
+| qmrust `main` | `main` | Rust reimplementation |
 
-### 2.3 Model availability by version
+`v2.4.1-zenodo` is an archival duplicate of `v2.4.1` and is excluded.
 
-Not every model exists in every release. This is declared data, not something the
-harness discovers.
+**Tag names are not uniform.** `2.0.1` and `2.0.2` carry no `v` prefix while every
+other tag does. This is why `source.ref` is declared per target (§5) rather than
+derived from the version string.
 
-| Model | 2.1.0 | 2.2.0 | 2.3.0 | 2.4.0 | 2.4.1 | 2.5.0 | 3.0.0 | master | qmrust |
-|---|---|---|---|---|---|---|---|---|---|
-| `qmt_spgr` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `inversion_recovery` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `vfa_t1` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `b1_dam` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `mt_sat` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `mt_ratio` | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `mono_t2` | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `b1_afi` | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ |
+Several tags exist without a corresponding published release: `v2.0.4`, `v2.0.14`,
+`v2.3.1`, `v2.4.2`, `v2.5.0b`, `ismrm2022`. "Every release" is read here as every
+*published release*. Each of those tags is one additional directory if wanted (§13).
+
+### 2.3 Three API eras
+
+The 15 targets span three incompatible qMRLab APIs. This is the main reason install
+and drive logic lives per-target (§5) rather than in shared code.
+
+| Era | Releases | Layout | Model API |
+|---|---|---|---|
+| **1. qMTLab** | V1 | `Common/`, `SPGR/`, `SIRFSE/`, `bSSFP/`, `qMTLab.m` | No model objects, no `FitData`. GUI-era |
+| **2. CamelCase** | v2.0.0 – v2.0.5 | `Models/`, `Common/FitData.m` | `Model = SPGR(); FitData(data, Model, ...)` |
+| **3. snake_case** | v2.1.0 – v3.0.0, master | `src/Models/` | Current API |
+
+**Era 1 is the significant risk in this scope.** V1 has no `Models/` tree and no
+`FitData.m` at all — it is a GUI application (`qMTLab.m` + `qMTLab.fig`) with three
+qMT method directories beside it. It contributes exactly **one** model, `qmt_spgr`, and
+driving it headlessly means calling into `SPGR/` directly with hand-constructed
+protocol and fit-option structs. It is scoped in deliberately, but it is archaeology,
+and it is the target most likely to end a run as `status: failed`. Nothing else depends
+on it: it is one directory, and its failure is one red cell (§10).
+
+### 2.4 Model availability by version
+
+Not every model exists in every release. This is declared data (§5), not something the
+harness discovers. Verified by inspecting each tag's tree.
+
+| Model | V1 | 2.0.0–2.0.5 | 2.1.0 | 2.2.0 | 2.3.0 | 2.4.0 | 2.4.1 | 2.5.0 | 3.0.0 | master | qmrust |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `qmt_spgr` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `inversion_recovery` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `vfa_t1` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `b1_dam` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `mt_sat` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `mt_ratio` | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `mono_t2` | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `b1_afi` | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ |
+
+In eras 1 and 2 the file names differ from the canonical model id: `SPGR.m`,
+`InversionRecovery.m`, `VFA_T1.m`, `B1_DAM.m`, `MTSAT.m`. The canonical id is what the
+record and the site use; the mapping is the adapter's business.
 
 A missing combination renders as `not_applicable` — a hole, never a failure.
 
@@ -85,7 +116,7 @@ Consequences:
   the free grant is what it already runs on.
 - **The seg_ci container-per-target pattern cannot carry the MATLAB legs.**
 - Should the repo ever need to be private, or need pre-R2021a MATLAB, the escape hatch
-  is an `MLM_LICENSE_TOKEN` from the MATLAB Batch Licensing Pilot (see §10).
+  is an `MLM_LICENSE_TOKEN` from the MATLAB Batch Licensing Pilot (see §12).
 
 ### 3.2 R2021a is the floor
 
@@ -95,9 +126,23 @@ v2.4.1 (Sep 2020) all predate R2021a, "pin each version to its era" collapses to
 
 | Target | MATLAB release |
 |---|---|
-| v2.1.0, v2.2.0, v2.3.0, v2.4.0, v2.4.1 | R2021a |
+| V1, v2.0.0 – v2.0.5, v2.1.0 – v2.4.1 | R2021a |
 | v2.5.0, v3.0.0 | R2026a |
 | `master` | latest |
+
+**R2021a is the oldest MATLAB this design can reach**, and every target older than
+v2.5.0 gets it. Reaching R2020b — one release further back — requires the container
+route and an `MLM_LICENSE_TOKEN` (§12), which is not worth one release. Nothing older
+than R2020b is available on hosted runners at all, so era-appropriate MATLAB for the
+2016–2017 targets does not exist as an option; R2021a is the floor in practice as well
+as in principle.
+
+Running 2016-era code on R2021a is expected to need fixes. That is what each target's
+`setup.sh` is for (§5). If a target proves genuinely unrunnable on R2021a, the fallback
+is an Octave lane — qMRLab ships `qmrlab/octaveci` and `qmrlab/octjn` images — added as
+a third `lane` value. That is a per-target escape hatch, not a plan, and it carries a
+real cost: Octave-vs-MATLAB numerical differences would confound that target's
+comparison, so it must be recorded in the environment block and shown on the site.
 
 The MATLAB release is recorded as a first-class field on every result so the
 version/runtime confound stays visible rather than baked in.
@@ -408,8 +453,9 @@ seg_ci. Rejected per §3.4: it solves a problem this repo does not have.
 
 ## 13. Deferred
 
-- **qMRLab v2.0.x and V1.** CamelCase API adapter plus, most likely, an Octave lane.
-  qMRLab ships `qmrlab/octaveci` and `qmrlab/octjn` images that may serve.
+- **Tag-only versions.** `v2.0.4`, `v2.0.14`, `v2.3.1`, `v2.4.2`, `v2.5.0b` and
+  `ismrm2022` are tags without published releases. Each is one additional target
+  directory if the extra resolution is wanted.
 - **Mid-era MATLAB pins.** The era axis currently has only two real values (R2021a,
   R2026a). Adding intermediate pins (e.g. R2023b) would widen the MATLAB axis at
   roughly linear cost.
