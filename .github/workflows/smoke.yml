@@ -18,6 +18,8 @@ permissions:
 jobs:
   harness-tests:
     runs-on: ubuntu-latest
+    # The Python suite runs in well under a second; ten minutes is already generous.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,6 +30,13 @@ jobs:
   smoke:
     needs: harness-tests
     runs-on: ubuntu-latest
+    # Spec Sec.10: per-job timeouts prevent a wedged MATLAB -- a stalled fit, a hung
+    # install, a licensing call that never returns -- from burning the 360-minute
+    # default. The observed end-to-end time for a leg, including the MATLAB install,
+    # is roughly 5 minutes (v3.0.0/R2026a); V1's qmt_spgr is the slowest fit in the
+    # project. 45 minutes leaves a wide margin for a slow runner while still failing
+    # fast on a genuine hang, well inside an hour rather than six.
+    timeout-minutes: 45
     strategy:
       # One era's MATLAB pin failing to install must never hide the other two legs'
       # results -- that would turn "R2021a is broken" into "smoke is red", no era
@@ -167,6 +176,7 @@ jobs:
 
   analyze-runs:
     needs: smoke
+    timeout-minutes: 15
     # always(): a partial set of legs (e.g. one era's MATLAB pin failing to install)
     # is the normal degraded case here, not a reason to skip proving the analysis
     # stage still consumes whatever real adapter output did land.
