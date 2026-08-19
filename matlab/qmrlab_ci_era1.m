@@ -110,8 +110,13 @@ function [times, Fit] = qmrlab_ci_era1_run_fits(data, Prot, FitOpt, n)
 
     times = zeros(1, n);
     for r = 1:n
+        % evalc captures the fit's stdout so it never reaches the CI log. qMRLab prints
+        % one "Fitting voxel k/N" line PER VOXEL -- 4101 lines for a single V1 model, 86%
+        % of that job's log. Beyond the noise, those writes land inside the timed region,
+        % so without this the published fit_seconds partly measures the CI log pipe
+        % rather than the fit.
         t0 = tic;
-        Fit = FitData(data, Prot, FitOpt, 'SPGR', 0);
+        evalc('Fit = FitData(data, Prot, FitOpt, ''SPGR'', 0);');
         times(r) = toc(t0);
     end
 end
