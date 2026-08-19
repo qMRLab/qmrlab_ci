@@ -1,0 +1,5 @@
+id: b1_dam
+dataset: b1_dam
+mask: masks/b1_dam.nii.gz
+maps:
+  - {name: B1map, unit: au}

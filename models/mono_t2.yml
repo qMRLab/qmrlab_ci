@@ -1,0 +1,6 @@
+id: mono_t2
+dataset: mono_t2
+mask: masks/mono_t2.nii.gz
+maps:
+  - {name: T2, unit: s}
+  - {name: M0, unit: au}

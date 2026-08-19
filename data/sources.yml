@@ -1,0 +1,36 @@
+# OSF archives pinned by version AND checksum. The ?version= pin alone is not enough:
+# a silent re-upload under the same version would move every number in the benchmark
+# without changing this file. Checksums captured 2026-08-19.
+datasets:
+  ir:
+    url: "https://osf.io/cmg9z/download?version=3"
+    sha256: "7e9ac1ce54a93352e1504c4244b43a524746cf00b33f60b23b3d11f0572beac7"
+    bytes: 458234
+  qmt:
+    url: "https://osf.io/pzqyn/download?version=2"
+    sha256: "dc0ad3c95bb2e3f0c40f98aa844c4956c83e8991364ef386a67de140df5af759"
+    bytes: 805750
+  mono_t2:
+    url: "https://osf.io/kujp3/download?version=3"
+    sha256: "671354b724d20f8f3a6b4a05b7a4433ba00068edb87eaf40b946b6544eb96a7d"
+    bytes: 4817256
+  mtr:
+    url: "https://osf.io/erm2s/download?version=2"
+    sha256: "2550cfd14b1bcaae6e47ae79066f7452a02a31c23d87429cdcc47df649766d3c"
+    bytes: 2460374
+  mtsat:
+    url: "https://osf.io/c5wdb/download?version=4"
+    sha256: "23c212fe7852e77e7b972dd512a68c12be2fb26c3a6e0a229d87fef211784c5e"
+    bytes: 55020114
+  vfa_t1:
+    url: "https://osf.io/7wcvh/download?version=3"
+    sha256: "62adf68a4ccfb15e4e01e5ff5440ce3faa78d35c346a022c027113ab8621ab43"
+    bytes: 294729
+  b1_dam:
+    url: "https://osf.io/mw3sq/download?version=3"
+    sha256: "60d76d686319083fbea6d49576580461e2578c62712917494674940bce987e5c"
+    bytes: 92617
+  b1_afi:
+    url: "https://osf.io/csjgx/download?version=9"
+    sha256: "8762467cc55c340ebabbe4fa4685289ff74e75560e6c8ef58aed78486cdf3a1a"
+    bytes: 9020541

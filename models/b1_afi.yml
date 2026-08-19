@@ -1,0 +1,5 @@
+id: b1_afi
+dataset: b1_afi
+mask: masks/b1_afi.nii.gz
+maps:
+  - {name: B1map, unit: au}

@@ -1,0 +1,6 @@
+id: vfa_t1
+dataset: vfa_t1
+mask: masks/vfa_t1.nii.gz
+maps:
+  - {name: T1, unit: s}
+  - {name: M0, unit: au}

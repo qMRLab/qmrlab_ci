@@ -1,0 +1,5 @@
+id: mt_ratio
+dataset: mtr
+mask: masks/mt_ratio.nii.gz
+maps:
+  - {name: MTR, unit: percent}

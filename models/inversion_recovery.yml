@@ -1,0 +1,5 @@
+id: inversion_recovery
+dataset: ir
+mask: masks/inversion_recovery.nii.gz
+maps:
+  - {name: T1, unit: s}
