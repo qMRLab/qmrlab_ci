@@ -59,20 +59,44 @@ Several tags exist without a corresponding published release: `v2.0.4`, `v2.0.14
 The 15 targets span three incompatible qMRLab APIs. This is the main reason install
 and drive logic lives per-target (§5) rather than in shared code.
 
-| Era | Releases | Layout | Model API |
+| Era | Releases | Layout | Fit entry point |
 |---|---|---|---|
-| **1. qMTLab** | V1 | `Common/`, `SPGR/`, `SIRFSE/`, `bSSFP/`, `qMTLab.m` | No model objects, no `FitData`. GUI-era |
-| **2. CamelCase** | v2.0.0 – v2.0.5 | `Models/`, `Common/FitData.m` | `Model = SPGR(); FitData(data, Model, ...)` |
-| **3. snake_case** | v2.1.0 – v3.0.0, master | `src/Models/` | Current API |
+| **1. qMTLab** | V1 | `Common/`, `SPGR/`, `SIRFSE/`, `bSSFP/`, `qMTLab.m` | `Fit = FitData(data, Prot, FitOpt, Method, wait)`, `Method = 'SPGR'` |
+| **2. CamelCase** | v2.0.0 – v2.0.5 | `Models/`, `Common/FitData.m` | `Fit = FitData(data, Model, wait)`, `Model = SPGR()` |
+| **3. snake_case** | v2.1.0 – v3.0.0, master | `src/Models/` | Current object API |
 
-**Era 1 is the significant risk in this scope.** V1 has no `Models/` tree and no
-`FitData.m` at all — it is a GUI application (`qMTLab.m` + `qMTLab.fig`) with three
-qMT method directories beside it. It contributes exactly **one** model, `qmt_spgr`, and
-driving it headlessly means calling into `SPGR/` directly with hand-constructed
-protocol and fit-option structs. It is scoped in deliberately — driven headless, on R2021a, against the
-same canonical qMT input as every other target (§6.1) — but it is archaeology, and it
-is the target most likely to end a run as `status: failed`. Nothing else depends on it:
-it is one directory, and its failure is one red cell (§10).
+Note the era 1 → era 2 change is not just naming: `FitData` went from taking a
+`(Prot, FitOpt, Method)` triple to taking a single model object that carries all three.
+
+**Era 1 is the significant risk, but not for the reason first assumed.** V1 is
+driveable: it has `Common/FitData.m`, it takes `Method = 'SPGR'`, and it returns the
+fields `F, kf, kr, R1f, R1r, T2f, T2r, resnorm` — the same names later versions produce,
+so its outputs line up with the rest of the matrix without renaming.
+
+The real risk is the **protocol**. V1 ships `SPGR/Parameters/DefaultProt.mat` and
+`DefaultFitOpt.mat`, and neither matches the canonical qMT dataset:
+
+| | V1 defaults | OSF qmt dataset (what every other target fits) |
+|---|---|---|
+| Measurement points | **15** (3 angles × 5 offsets) | **10** (2 angles × 5 offsets) |
+| Angles | 400, 800, 1200 | 142, 426 |
+| Offsets | 1000, 2000, 4000, 8000, 12000 | 443, 1088, 2732, 6862, 17235 |
+| TR | 0.05 | 0.025 |
+| Tm | 0.01024 | 0.0102 |
+| Read pulse α | 10 | 7 |
+| Model | Yarnykh | Ramani |
+
+So the V1 adapter must **construct** `Prot` and `FitOpt` to match the dataset rather
+than load the shipped defaults — loading the defaults would fail outright, since
+`MTdata.mat` has 10 points and the default protocol declares 15. V1 does implement
+Ramani (`SPGR/functions/SPGR_R_fun.m`), and its `MTpulse.shape` is `gausshann`, matching
+the canonical protocol, so the required parameterization is expressible. Fidelity of
+that hand-built protocol is what determines whether V1's numbers are comparable, and it
+is the one thing about this target worth reviewing carefully.
+
+V1 contributes exactly **one** model, `qmt_spgr`. It is scoped in deliberately — driven
+headless, on R2021a, against the same canonical qMT input as every other target (§6.1).
+Nothing else depends on it: it is one directory, and its failure is one red cell (§10).
 
 ### 2.4 Model availability by version
 
