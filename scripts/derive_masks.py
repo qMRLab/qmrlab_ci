@@ -60,9 +60,27 @@ def write_mask_nifti(path, mask: np.ndarray, shape) -> None:
 
 
 def _find(root: pathlib.Path, dataset: str, name: str) -> pathlib.Path:
-    hits = sorted((root / dataset).rglob(name))
+    """Locate an INPUT file within an unpacked archive.
+
+    Deliberately blind to FitResults/: that directory holds qMRLab's own fitted output,
+    and several archives ship files there under names identical to the inputs. Deriving a
+    mask from a fitted map would make the mask a function of the thing being measured.
+    sorted() is not a defence -- 'FitResults/Mask.mat' sorts BEFORE 'Mask.mat', so the
+    shadow would win every time. Ambiguity raises rather than picking, because there is no
+    ordering rule here that is right by construction.
+    """
+    hits = [
+        p for p in sorted((root / dataset).rglob(name))
+        if "FitResults" not in p.parts
+    ]
     if not hits:
-        raise FileNotFoundError(f"{name} not found under {root / dataset}")
+        raise FileNotFoundError(
+            f"{name} not found under {root / dataset} (excluding FitResults/)"
+        )
+    if len(hits) > 1:
+        raise ValueError(
+            f"{name} is ambiguous under {root / dataset}: {[str(h) for h in hits]}"
+        )
     return hits[0]
 
 
