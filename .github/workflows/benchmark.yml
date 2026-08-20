@@ -10,6 +10,11 @@ on:
     - cron: "0 4 * * 2"
   workflow_dispatch:
   push:
+    # Default branch only. The full matrix is 15 targets and ~20 minutes of MATLAB, and
+    # `publish` is gated to the default branch anyway -- so a branch push was running the
+    # whole thing a second time with no way to publish the result. smoke.yml keeps its
+    # all-branch trigger; being the cheap per-push check is its job.
+    branches: [main]
     paths:
       - "harness/**"
       - "scripts/**"
