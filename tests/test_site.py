@@ -39,8 +39,8 @@ def test_timing_rows_carry_the_matlab_release():
 
 
 def test_median_fit_time_is_derived_not_stored():
-    """Median of [2.0, 4.0]; %.6g renders it as "3", so match the cell not the float."""
-    assert "<td>3</td>" in render(DOC)
+    """Median of [2.0, 4.0] is 3 and is computed here, not read from the record."""
+    assert ">3s<" in render(DOC)
 
 
 def test_equivalence_class_hash_is_shown_abbreviated():
