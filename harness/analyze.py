@@ -15,7 +15,7 @@ import pathlib
 import numpy as np
 
 from harness.compare import compare_maps
-from harness.config import ConfigError, load_models
+from harness.config import ConfigError, load_models, load_targets
 from harness.measure import masked_stats, voxel_sha256
 from harness.nifti import read_nifti
 from harness.record import load_adapter_record
@@ -40,12 +40,36 @@ def _analysis_failure(target: str, model: str, exc: Exception) -> dict:
     }
 
 
+def _missing_record(target: str, model: str) -> dict:
+    """A declared (target, model) combination for which no record exists at all.
+
+    Distinct from both `failed` (the adapter ran and reported a problem) and the
+    absence of a cell entirely (a target that never declared this model — a genuine
+    capability hole, spec §2.4). `missing` means the catalog says this combination
+    should have been attempted and nothing — not even a failure record — came back:
+    the classic signature of a killed or never-started CI job (C2/C3, final review).
+    Rendered by site.py as visibly distinct from both `failed` and "not applicable"
+    (spec §10: "failure is data" — a lost job must not silently read as a hole).
+    """
+    return {
+        "target": target, "software": "", "version": "", "model": model,
+        "status": "missing", "environment": {}, "timing": {},
+        "error": (
+            "no record found for this declared target/model combination — the job "
+            "likely did not run or was killed before it could write output"
+        ),
+        "maps": [],
+    }
+
+
 def analyze(
-    results_dir, root, *, models_root=None, reference: str = "qmrlab@v3.0.0"
+    results_dir, root, *, models_root=None, targets_root=None,
+    reference: str = "qmrlab@v3.0.0",
 ) -> dict:
     results_dir = pathlib.Path(results_dir)
     root = pathlib.Path(root)
     models = load_models(pathlib.Path(models_root or root))
+    targets = load_targets(pathlib.Path(targets_root or root))
 
     records: list[dict] = []
     # model -> map name -> target -> canonical-unit values, for the comparison pass.
@@ -104,6 +128,16 @@ def analyze(
         for name, values in staged.items():
             canonical[record.model][name][record.target] = values
         records.append(enriched)
+
+    # Every (target, model) the catalog declares must produce a cell, even when the
+    # job that should have written it never ran or was killed. Without this, a wiped
+    # target simply has no records at all and vanishes from the matrix rather than
+    # showing as the failure it is (C3, final review; spec §2.4/§10).
+    seen = {(r["target"], r["model"]) for r in records}
+    for target_id, target_spec in sorted(targets.items()):
+        for model_id in target_spec.models:
+            if (target_id, model_id) not in seen:
+                records.append(_missing_record(target_id, model_id))
 
     equivalence: dict = collections.defaultdict(dict)
     for record in records:

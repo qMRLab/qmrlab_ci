@@ -183,9 +183,15 @@ jobs:
 
   analyze:
     needs: [plan, fit-matlab, fit-rust]
-    # always(): a target that failed to install must not prevent the other fourteen
-    # from being published. Partial results are the normal case, not an error.
-    if: always()
+    # !cancelled(), NOT always(): always() also runs after a CANCELLATION, and a
+    # cancelled run typically means most jobs never finished -- fit-matlab and
+    # fit-rust get killed mid-matrix, not "not installed". Publishing whatever the
+    # handful of survivors produced over a previous COMPLETE run is exactly the C2
+    # defect (final review): 14 of 15 targets killed, 2 survivors' 14 records
+    # published over a prior run's full 14-qMRLab-target site. A target that
+    # genuinely failed to install (not cancelled) must still let the rest publish,
+    # which is what !cancelled() preserves -- it only excludes the cancellation case.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -200,23 +206,49 @@ jobs:
       - run: |
           python -m harness.analyze --results-dir results --root . \
             --out site/data/results.json
-      # if: always() upstream means a partial result set is the normal case -- but
-      # "partial" must not silently include "none". A run where every target died
-      # must not produce a green analyze and a published site that overwrites a good
-      # previous site with an empty matrix, nor a drift-log entry with no digests.
-      # This check lives here, not in harness/analyze.py, because analyze-with-no-
-      # input is legitimately valid to call directly (e.g. from unit tests).
-      - name: Refuse to publish a total-failure run (zero records)
+      # A zero-record guard only trips at EXACTLY zero -- the C2 failure mode was
+      # 14 of 15 targets cancelled, which is very much not zero. This is a
+      # COMPLETENESS guard instead: compute the expected (target, model) count
+      # straight from targets/*/target.yml (independent of however analyze.py
+      # itself counted things), compare it against how many of those combinations
+      # actually produced a record (excluding analyze's own `missing` markers --
+      # see harness/analyze.py's C3 fix, which fills every declared gap with one),
+      # and refuse to publish below a 50% completeness ratio. Partial results are
+      # still the normal, intended case (spec §10) -- this only catches a run that
+      # lost MOST of its matrix, the one thing that must never overwrite a good site.
+      # Lives here, not in harness/analyze.py, because analyze-with-partial-input is
+      # legitimately valid to call directly (e.g. from unit tests).
+      - name: Refuse to publish a run that lost most of its matrix (completeness guard)
         run: |
           python - <<'PY'
-          import json, sys
+          import json, pathlib, sys
+
+          from harness.config import load_targets
+
+          THRESHOLD = 0.5
+
+          targets = load_targets(pathlib.Path("."))
+          expected = sum(len(t.models) for t in targets.values())
+
           doc = json.load(open("site/data/results.json"))
-          n = len(doc["records"])
-          print(f"{n} record(s) analyzed")
-          if n == 0:
-              print("::error::analyze produced ZERO records -- every target failed. "
-                    "This is a total-failure run, not a partial one; refusing to "
-                    "publish an empty site or append an empty entry to the drift log.")
+          records = doc["records"]
+          produced = sum(1 for r in records if r["status"] != "missing")
+          ratio = (produced / expected) if expected else 0.0
+
+          print(f"{produced}/{expected} declared (target, model) combinations "
+                f"produced a record ({ratio:.1%})")
+
+          if expected == 0:
+              print("::error::no (target, model) combinations are declared in "
+                    "targets/*/target.yml -- nothing to publish.")
+              sys.exit(1)
+          if ratio < THRESHOLD:
+              print(f"::error::only {produced}/{expected} ({ratio:.1%}) of declared "
+                    f"(target, model) combinations produced a record -- below the "
+                    f"{THRESHOLD:.0%} completeness threshold. This looks like a run "
+                    "that lost most of its matrix (e.g. to cancellation), not a "
+                    "normal partial run; refusing to publish it over a good "
+                    "previous site or append it to the drift log.")
               sys.exit(1)
           PY
       - run: python -m harness.site --results site/data/results.json --out-dir site

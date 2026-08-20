@@ -4,8 +4,12 @@ Fits the same eight qMRI models against the same fixed data using **every publis
 qMRLab release**, qMRLab `master`, and [qmrust](https://github.com/qMRLab/qmrust) — then
 publishes each output map's statistics, byte-equivalence, and processing time.
 
-> **Status: under construction.** The harness and its test suite are in place; the MATLAB
-> drivers, data fetch, and workflows are still being built. Nothing is published yet.
+> **Status: live.** The benchmark runs weekly (and on demand) and publishes to
+> **[qmrlab.org/qmrlab_ci](https://qmrlab.org/qmrlab_ci/)**. The full machine-readable
+> output backing that page is at
+> [`data/results.json`](https://qmrlab.org/qmrlab_ci/data/results.json), and a
+> run-over-run digest log at
+> [`data/history.jsonl`](https://qmrlab.org/qmrlab_ci/data/history.jsonl).
 
 ## What it answers
 

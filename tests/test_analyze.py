@@ -2,11 +2,24 @@ import json
 import pathlib
 
 import numpy as np
+import yaml
 
 from harness.analyze import analyze
 from tests.helpers import write_nifti
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def _write_target(root, target_id, *, models, lane="rust", **extra):
+    """Write a minimal targets/<id>/target.yml declaring MODELS."""
+    path = pathlib.Path(root) / "targets" / target_id / "target.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "id": target_id, "software": "x", "version": "1", "lane": lane,
+        "source": {"repo": "x/y", "ref": "main"}, "models": models,
+    }
+    doc.update(extra)
+    path.write_text(yaml.safe_dump(doc))
 
 
 def _target(results, target_id, values, unit="s", model="vfa_t1"):
@@ -166,3 +179,52 @@ def test_a_voxel_count_mismatch_isolates_to_that_target_only(tmp_path):
     assert by_target["good@1"]["status"] == "ok"
     assert by_target["broken@1"]["status"] == "failed"
     assert "analysis failed" in by_target["broken@1"]["error"]
+
+
+def test_a_declared_target_model_with_no_record_at_all_is_marked_missing(tmp_path):
+    """C3, final review: a killed/never-started job must render as a failure of the
+    RUN, never silently as a design hole (spec §2.4/§10)."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "good@1", [1.0, 2.0])
+    _mask(root, 2)
+    _write_target(root, "good@1", models=["vfa_t1"])
+    # "gone@1" declares vfa_t1 but its job produced no record directory at all --
+    # e.g. cancelled before it could write anything.
+    _write_target(root, "gone@1", models=["vfa_t1"])
+
+    doc = analyze(results, root, models_root=ROOT, reference="good@1")
+    by_key = {(r["target"], r["model"]): r for r in doc["records"]}
+
+    assert by_key[("good@1", "vfa_t1")]["status"] == "ok"
+    missing = by_key[("gone@1", "vfa_t1")]
+    assert missing["status"] == "missing"
+    assert missing["maps"] == []
+    assert "no record found" in missing["error"]
+
+
+def test_an_undeclared_target_model_combination_is_not_marked_missing(tmp_path):
+    """A model a target never declared is a real capability gap (not_applicable),
+    never confused with a run that lost part of its matrix."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _mask(root, 2)
+    # "narrow@1" declares only mono_t2 -- never vfa_t1.
+    _write_target(root, "narrow@1", models=["mono_t2"])
+
+    doc = analyze(results, root, models_root=ROOT, reference="narrow@1")
+    by_key = {(r["target"], r["model"]): r for r in doc["records"]}
+
+    assert ("narrow@1", "vfa_t1") not in by_key
+    # mono_t2 IS declared and never produced a record, so that combination is missing.
+    assert by_key[("narrow@1", "mono_t2")]["status"] == "missing"
+
+
+def test_a_target_with_no_declared_models_directory_synthesizes_nothing(tmp_path):
+    """Existing behaviour (no targets/ directory at all, as in every other test
+    here) must be unaffected: load_targets on an absent tree is simply empty."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "good@1", [1.0, 2.0])
+    _mask(root, 2)
+
+    doc = analyze(results, root, models_root=ROOT, reference="good@1")
+
+    assert [r["status"] for r in doc["records"]] == ["ok"]
