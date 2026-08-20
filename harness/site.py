@@ -27,10 +27,15 @@ TARGET_ORDER = [
     "qmrlab@v2.4.1", "qmrlab@v2.5.0", "qmrlab@v3.0.0", "qmrlab@master", "qmrust@main",
 ]
 
-# Models whose fit is iterative. qMRLab's qMT fit is NOT run-to-run deterministic
-# (verified: master and v3.0.0 are the same commit and produced different hashes in
-# one run, differing by ~5e-7 relative), so for these a hash difference does not
-# imply a real difference and the page must say so.
+# Models whose fit is iterative, and therefore sensitive to the MATLAB build.
+#
+# An earlier reading of this project's data concluded these fits were not run-to-run
+# deterministic. That was WRONG and is retracted: all five models are bit-stable across
+# same-session, separate-session and single-threaded runs on a fixed MATLAB build. The
+# real cause of the observed difference is that `master` pins matlab_release: latest
+# while v3.0.0 pins R2026a, so the same qMRLab source ran on two different MATLAB
+# builds -- and a different build shifts lsqcurvefit's converged optimum by ~1e-7.
+# That is the confound spec §3.2 records matlab_release for, not nondeterminism.
 ITERATIVE = {"qmt_spgr", "mono_t2", "inversion_recovery"}
 
 SEQ = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7",
@@ -258,10 +263,13 @@ def _bands(doc):
             cap = (f"<b>{_e(model)} / {_e(mp)}</b> — cells with the same colour produced "
                    "byte-identical maps; muted cells are unique to that version.")
             if model in ITERATIVE:
-                cap += (" <b>Caveat:</b> this fit is iterative and not run-to-run "
-                        "deterministic (~5e-7 relative), so a colour change here can be "
-                        "noise rather than a real difference — read the agreement matrix "
-                        "instead.")
+                cap += (" <b>Caveat:</b> this fit is iterative, so its converged optimum "
+                        "shifts by around 1e-7 between MATLAB builds. Where two targets "
+                        "differ only in MATLAB release — <code>master</code> tracks the "
+                        "latest release while tagged versions are pinned — a colour change "
+                        "can be the build rather than the software. Check the MATLAB column "
+                        "on the Timing tab, and read the agreement matrix, before concluding "
+                        "qMRLab changed.")
             out.append(
                 f'<div data-group="band" data-key="{_e(model + "/" + mp)}">'
                 f'<p class="sub" style="margin:.2rem 0 .4rem">{cap}</p>'
