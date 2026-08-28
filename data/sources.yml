@@ -34,3 +34,35 @@ datasets:
     url: "https://osf.io/csjgx/download?version=9"
     sha256: "8762467cc55c340ebabbe4fa4685289ff74e75560e6c8ef58aed78486cdf3a1a"
     bytes: 9020541
+
+  # ISMRM Reproducible Research Study Group 2020 T1 mapping challenge (Boudreau et al.,
+  # MRM 2024, doi 10.1002/mrm.30111). Both archives carry acquisition parameters as
+  # per-NIfTI sidecars, so the protocol travels with the data instead of being
+  # transcribed -- but the two archives disagree on format: the German one ships .json
+  # AND .yaml per volume, the Mexican one ships .yaml ONLY (52 files, zero .json).
+  # Checksums captured 2026-08-28; OSF's own API reports the same sha256 at version 3.
+  #
+  # Both submissions used the challenge's prescribed TIs -- 50, 400, 1100, 2500 ms -- and
+  # that is the whole sampling. A three-parameter fit on four points has one degree of
+  # freedom, which is a property of the challenge rather than of this benchmark, and is
+  # why these datasets are added beside the qMRLab archive rather than instead of it.
+  rrsg_phantom_germany:
+    # NIST/ISMRM system phantom, serial 23, Aachen MR1 (one of seven scanners in the
+    # archive). Ships Real and Imaginary as well as Magnitude, so a fitter that does not
+    # take abs() -- QUIT's qi irtse -- gets sign-restored data without preprocessing.
+    # Aachen is the scanner whose Real/Imaginary reproduce its own Magnitude to p99.9 =
+    # 1.3%; on every other scanner 30-48% of voxels disagree by more than 1%, so the
+    # |s(TI)| == Magnitude(TI) identity is assertable here and nowhere else in the set.
+    url: "https://osf.io/pwnc3/download?version=3"
+    sha256: "cc9260a0d365cbfb919ce65030532122b4369ca2e87231370df07e63cc7e95a6"
+    bytes: 6976505
+  rrsg_brain_mexico:
+    # Human brain, UNAM. Subject 21527, Philips session 20200206_190116_Ph, which ships
+    # the SAME acquisition as both _Ph_real_ and _Ph_mag_. That pairing is the reason
+    # this subject was chosen over the other ten: a magnitude-vs-signed difference is
+    # attributable to the fitters rather than to the data, because both fit the same
+    # scan. Note the config in rrsg2020/analysis lists only the _mag_ entry; the _real_
+    # volume is in the archive regardless.
+    url: "https://osf.io/fubq6/download?version=3"
+    sha256: "82460279e42d05d84bd3f6a17c4bc2bf4bc3b3316b7f3d0ec782b4a9711d3170"
+    bytes: 29040842
