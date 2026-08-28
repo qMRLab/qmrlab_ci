@@ -28,15 +28,19 @@ class Nifti:
     def values(self) -> np.ndarray:
         """Voxels as float64 with the NIfTI intensity transform applied.
 
-        A zero slope means "unset" per the spec, so it is identity rather than a
-        multiply by zero.
+        A slope that is zero or non-finite means "unset", so it is identity rather
+        than a multiply by zero or a wholesale NaN.
         """
         out = self.raw.astype(np.float64)
-        # A zero slope means "unset" and disables the transform ENTIRELY -- including
-        # any intercept. Folding this into the condition below instead would multiply
-        # by zero whenever scl_inter is nonzero, which is the one thing the spec
-        # explicitly forbids.
-        if self.scl_slope == 0.0:
+        # An unset slope disables the transform ENTIRELY -- including any intercept.
+        # Folding this into the condition below instead would multiply by zero
+        # whenever scl_inter is nonzero, which is the one thing the spec explicitly
+        # forbids. "Unset" is spelled two ways in the wild: the spec's zero, and the
+        # NaN that ITK writes to mean "no scaling" -- hence every file QUIT produces.
+        # NaN fails an equality test, so without the isfinite guard a QUIT map would
+        # scale to NaN * out + NaN: every voxel NaN with nothing raising, because the
+        # record still validates as 'ok' and the statistics just go quietly to n=0.
+        if not np.isfinite(self.scl_slope) or self.scl_slope == 0.0:
             return out
         if self.scl_slope != 1.0 or self.scl_inter != 0.0:
             out = self.scl_slope * out + self.scl_inter
