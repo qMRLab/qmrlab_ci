@@ -444,12 +444,52 @@ are already anatomical. `b1_dam` stays full, for the reason `masks/README.md` al
 Keeping the stats mask means no published number and no `history.jsonl` digest moves. The
 site carries both, and says which is which.
 
+## 7.3 Disclosure: what the site must say out loud
+
+Every entry below is a choice this benchmark made that changes a published number. A reader who does
+not know about it will misread the page, so each is rendered as **visible text on the report site**,
+not a code comment, not a tooltip, and not this document. The precedent is the existing "What did not
+run" list, which prints its reasons.
+
+| Disclosure | Why the reader needs it |
+|---|---|
+| **The coverage-and-holes table (§2.4) in full** | SCT covers 2 of 9 models and QUIT 6. Without the table, a mostly-empty column reads as a broken tool rather than a declared scope. |
+| **`1/0 = inf` on reciprocal maps** | `transform: reciprocal` turns a background voxel where a software wrote `R1 = 0` into `T1 = inf`. Those voxels leave the statistics but are counted in `n_nonfinite`, so two targets can legitimately differ in *how many* voxels are unusable. State the rule, or that count looks like a defect. |
+| **QUIT is v3.4 (2023-11-29), not master** | Upstream's docs describe master. A reader comparing our numbers to the documentation needs to know `qi mtsat` here uses the small-flip-angle approximation that master made optional. |
+| **Cross-software hashes can never match** | `voxel_sha256` is on produced values, and QUIT writes float32 where qMRLab writes float64. "Unique" means nothing across families, and the equivalence bands must say so rather than implying disagreement. |
+| **Two masks, and which produced which number** | Published `stats` use the full mask; red flags use the Otsu interior mask. A reader comparing a mean on the Values tab against a flag on the Cross-software tab is looking at two different voxel sets. |
+| **Input-domain violations, named** | Where a dataset breaks a tool's documented input requirements, say whose requirement and how — see below. |
+
+### Input-domain flags
+
+A third, orthogonal field on `comparability.yml`, separate from the estimator classes. It exists
+because `related-estimator` paints amber and means "expected to differ", which would *understate* a
+tool being fed data it does not support.
+
+The worked case is `inversion_recovery` / QUIT. `qi irtse` is run on our magnitude archive
+**unmodified** — no polarity restoration. Cleaning up the input would report what QUIT does after we
+fixed its data for it, which is not what a user gets. So it runs as-is, and flags <span>red</span>
+with the cause stated: *"`qi irtse` applies no `abs()` to its residuals; this archive is magnitude
+with the null point at TI ≈ 0.62 s."*
+
+This is also why the RRSG datasets matter more than an extra row. The Germany phantom ships
+Real + Imaginary, so `qi irtse` gets sign-restored data there and should fit cleanly; the Mexico brain
+and our OSF archive are magnitude-only and should not. The same command, green on one dataset and red
+on two, for a reason the site names — that is a far stronger result than any single flag.
+
 ## 8. Site
 
 A **Cross-software** tab showing latest-of-each-software; the existing five tabs filter to
 `qmrlab` + `qmrust` so the version-history story stays readable. Every record already
 carries `software` and `version` as required non-empty fields that `site.py` never reads,
 so the facet data is present.
+
+**The coverage-and-holes table from §2.4 is rendered on the site**, not just in this spec — generated
+from `models/` and `targets/*/target.yml` rather than transcribed, so it cannot drift from what
+actually ran. It is the first thing a reader needs: without it, SCT's two populated cells out of nine
+read as eight failures instead of a declared scope.
+
+Every row of the §7.3 disclosure table renders as visible text beside the number it qualifies.
 
 One pre-existing bug to fix while there: `_ordered` appends unknown targets alphabetically
 at the tail, `_short` is two hardcoded string replaces, and the label gutters are fixed
