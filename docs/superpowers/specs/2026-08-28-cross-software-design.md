@@ -100,10 +100,32 @@ Three holes are worth naming because they look like they should not be:
 
 - **`b1_dam` / QUIT** — QUIT has no double-angle command. Its B1 module is `afi`, `dream`,
   `b1_papp`. `qi dream` is a different sequence, not DAM.
-- **`inversion_recovery` / QUIT** — `qi irtse` implements Padormo 2023 IR-TSE: it needs
-  ETL, ESP, TD1, per-TI TR, inversion-efficiency arrays, a navigator flip angle, and
-  **signed** data that crosses zero. Our archive is magnitude with 9 TIs. Different model,
-  different required metadata.
+- **`inversion_recovery` / QUIT** — `qi irtse` (Padormo et al., MRM 2022) exists and is
+  documented. It is held out for a protocol reason, not a capability one, and the reason is
+  worth stating precisely because the obvious version of it is wrong.
+
+  Its signal model *can* express ours. From `qiirtse.cpp`:
+
+  ```
+  M = PD*(1 - exp(-TI/T1))
+    + Q*PD*exp(-TI/T1) * ((1-exp(-TD1/T1))*exp(-TD2/T1)*cos(theta) + (1-exp(-TD2/T1)))
+  ```
+
+  As `TD2 → ∞` the bracket → 1, and with `Q = -1` this is exactly `M = PD*(1 - 2*exp(-TI/T1))`,
+  standard inversion recovery. But `TD2` is derived from `TR - TI - ETL*ESP - TD1`, and our
+  archive has TR = 2.5 s against TIs up to 1.7 s, so `TD2 ≤ 0.8 s` — nowhere near the limit.
+
+  The decisive blocker is data polarity. `qiirtse.cpp` normalises by `|max|` but applies **no
+  `abs()` to its residuals**, so it expects polarity-restored data. Our `IRData.mat` is
+  magnitude, and the null point sits inside the TI range — measured median in-mask signal
+  falls 7.7 → 2.8 from TI = 0.35 s to 0.50 s, then rises monotonically to 21.6 at 1.7 s.
+  Fitting a non-`abs` model to that fits noise below TI ≈ 0.65 s.
+
+  **Reopenable.** Polarity-restoring the magnitude data as a declared preprocessing step
+  makes the comparison run. It would enter as `related-estimator`, never `same-estimator`:
+  QUIT fits 2 parameters with the recovery physics explicit, while qMRLab fits 3
+  (`a + b*exp(-TI/T1)`, magnitude method) and absorbs incomplete recovery into `a` and `b`.
+  The polarity restoration is itself an estimator choice, which is what rules `same` out.
 - **`qmt_spgr` (SledPikeRP) / QUIT** — covered by `qmt_spgr_ramani` instead.
 
 ### 2.5 Deferred
