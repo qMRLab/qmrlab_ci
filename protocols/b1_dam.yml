@@ -1,0 +1,15 @@
+# Acquisition parameters for the `b1_dam` archive (spec 6.1). Values are qmrust's
+# recipes/non-bids/b1_dam_config.yaml, cross-checked against the archive's own Protocol
+# struct. There are no fit options -- the double-angle estimate is closed form.
+dataset: b1_dam
+
+parameters:
+  # archive Protocol.Alpha, Format 'FlipAngle' = 60: the archive records only the FIRST
+  # angle, because the double-angle identity is what defines the second. Both are written
+  # out here so that an adapter renders a protocol rather than re-deriving one, and so
+  # that the pair can be validated (the identity holds only when the second is exactly
+  # twice the first) instead of assumed. The order is the volume order of the stack
+  # scripts/mat_to_nifti.py builds: [alpha, 2*alpha] = [SFalpha, SF2alpha].
+  flip_angle:
+    unit: degree
+    values: [60, 120]

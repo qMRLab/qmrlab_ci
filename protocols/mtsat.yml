@@ -1,0 +1,42 @@
+# Acquisition parameters for the `mtsat` archive (spec 6.1). Values are qmrust's
+# recipes/non-bids/mt_sat_config.yaml, cross-checked against the archive's own Protocol
+# struct. The B1 correction factor is deliberately absent: it is a fit option, and its
+# per-version value is what the benchmark measures.
+#
+# Times are SECONDS everywhere in protocols/, never milliseconds. This dataset is where
+# that convention earns its keep: SCT 7.3 is inconsistent with ITSELF about it --
+# `sct_compute_mtsat -trmt/-trpd/-trt1` take seconds, while `sct_compute_ernst_angle -tr`
+# takes milliseconds (spec 9). An adapter that renders both from this file must convert
+# for the second, and the unit it is converting FROM has to be written down for that
+# conversion to be reviewable.
+#
+# The three weightings are flattened into per-weighting fields rather than nested, so that
+# every value in protocols/ sits at the same depth with its own unit beside it.
+dataset: mtsat
+
+parameters:
+  # archive Protocol.MTw, Format ['FlipAngle' 'TR (s)'] = [6.0 0.028] -- identical.
+  mtw_flip_angle:
+    unit: degree
+    value: 6
+  mtw_repetition_time:
+    unit: s
+    value: 0.028
+
+  # archive Protocol.PDw, Format ['FlipAngle' 'TR'] = [6.0 0.028] -- identical. The PDw
+  # Format string omits the unit that MTw's carries; the values are the same 0.028, which
+  # is what settles it.
+  pdw_flip_angle:
+    unit: degree
+    value: 6
+  pdw_repetition_time:
+    unit: s
+    value: 0.028
+
+  # archive Protocol.T1w, Format ['FlipAngle' 'TR'] = [20.0 0.018] -- identical.
+  t1w_flip_angle:
+    unit: degree
+    value: 20
+  t1w_repetition_time:
+    unit: s
+    value: 0.018

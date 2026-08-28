@@ -1,0 +1,33 @@
+# Acquisition parameters for the `ir` archive -- one source of truth, from which each
+# adapter renders its own tool-specific config (spec 6.1). They used to live in two
+# places, inside qMRLab's .mat and again in qmrust's recipe YAML; a third and fourth
+# consumer makes that untenable, because "the same settings" cannot be checked when
+# every tool transcribes them separately.
+#
+# Values are qmrust's recipes/non-bids/irt1_config.yaml -- the numbers this repo already
+# fits with -- cross-checked against the archive's own Protocol struct where it carries
+# them. Fit options (method, search range, start/bounds) are deliberately absent: those
+# differ per version by design and that drift is what the benchmark measures.
+#
+# Times are SECONDS everywhere in protocols/, never milliseconds. The archive records
+# this one in milliseconds and says so in its Format string; the conversion happens here,
+# once, rather than in each of the four adapters.
+dataset: ir
+
+parameters:
+  # archive Protocol.IRData, Format 'TI(ms)' = [350 500 650 800 950 1100 1250 1400 1700]
+  # -- identical to these values once the declared ms are read as ms. Nine volumes, and
+  # the order is the order of IRData's 4th dimension.
+  inversion_time:
+    unit: s
+    values: [0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700]
+
+  # NOT cross-checkable: qMRLab's inversion_recovery has no TR field at all, so the
+  # archive carries nothing to compare this against, and its magnitude fit
+  # (ra + rb*exp(-TI/T1)) never reads one. The value comes from qmrust's recipe alone.
+  # It becomes load-bearing the moment a tool that DOES use TR fits this dataset -- QUIT's
+  # `qi irtse` takes one -- so it is recorded here with its provenance rather than
+  # re-derived per adapter, and it is the first thing to suspect if such a fit disagrees.
+  repetition_time:
+    unit: s
+    value: 2.5

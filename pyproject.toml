@@ -6,10 +6,19 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=1.26",
     "PyYAML>=6.0",
+    # Reading MATLAB .mat, for scripts/mat_to_nifti.py only -- nothing under harness/
+    # imports it. A main dependency rather than the dev extra it used to be because
+    # three archives are .mat-only (ir, qmt, mtr) and prepare-data now converts them
+    # centrally, so a CI job that never touches MATLAB still needs the reader. The
+    # alternative was to let each non-MATLAB lane call `qmrust bidsify --mat-dir`,
+    # which would make an SCT job depend on a cargo build of an unrelated target and
+    # make SCT's inputs a function of a qmrust commit (spec 6.2). One wheel download
+    # is the cheaper half of that trade.
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "scipy>=1.11"]
+dev = ["pytest>=8.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

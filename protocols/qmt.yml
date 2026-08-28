@@ -1,0 +1,80 @@
+# Acquisition parameters for the `qmt` archive (spec 6.1). Values are qmrust's
+# recipes/non-bids/qmt_config_sledpikerp.yaml -- byte-identical to its Ramani twin but for
+# the sub-model token, so both qMT streams read this one file -- cross-checked against the
+# archive's own Protocol struct and against matlab/qmrlab_ci_era1_protocol.m, which
+# transcribes the same protocol into qMRLab V1's struct shape.
+#
+# Fit options are deliberately absent: st/lb/ub/fx, the lineshape, the R1f constraints and
+# the sub-model (SledPikeRP vs Ramani) are all per-version or per-stream choices, and that
+# drift is the thing the benchmark measures rather than something to pin here.
+#
+# Times are SECONDS everywhere in protocols/, never milliseconds; this archive states the
+# unit in its Format strings and agrees. `unit: none` marks a value that is dimensionless
+# or categorical -- written out rather than omitted, so that "every value carries a unit"
+# has no exceptions a reader has to notice.
+dataset: qmt
+
+parameters:
+  # archive Protocol.MTdata, Format ['Angle' 'Offset'], ten rows -- identical, and split
+  # here into two row-aligned lists. THE TWO LISTS ARE PARALLEL: index i of each is one
+  # measurement, and that index is the volume order of MTdata's 4th dimension. Storing
+  # them as a table of pairs would read better and would let a renderer emit the rows in
+  # any order it liked; keeping them as lists at the same depth as every other parameter
+  # keeps the file uniform, and the pairing is stated instead of implied by nesting.
+  saturation_flip_angle:
+    unit: degree
+    values: [142, 426, 142, 426, 142, 426, 142, 426, 142, 426]
+  saturation_offset:
+    unit: Hz
+    values: [443, 443, 1088, 1088, 2732, 2732, 6862, 6862, 17235, 17235]
+
+  # archive Protocol.TimingTable, Format ['Tmt (s)' 'Ts (s)' 'Tp (s)' 'Tr (s)' 'TR (s)']
+  # = [0.0102 0.003 0.0018 0.01 0.025] -- identical.
+  #
+  # qmrust's recipe carries only the first and the last of these five (timing.tmt and
+  # timing.TR); the middle three are recorded here because qMRLab reads all five and
+  # because TR is not independent of them -- qmt_spgr.m re-imposes
+  # TR = Tmt + Ts + Tp + Tr in UpdateFields, which these values satisfy exactly. An
+  # adapter that renders only tmt and TR is dropping information, not disagreeing with it.
+  mt_pulse_duration:
+    unit: s
+    value: 0.0102
+  mt_to_excitation_delay:
+    unit: s
+    value: 0.0030
+  excitation_pulse_duration:
+    unit: s
+    value: 0.0018
+  post_excitation_delay:
+    unit: s
+    value: 0.0100
+  repetition_time:
+    unit: s
+    value: 0.0250
+
+  # archive Model.options.Readpulsealpha = 7. Named for what it is -- the readout
+  # excitation angle -- and not "alpha", which in b1_dam means the saturation-free
+  # nominal angle and in this sequence would be read as the MT pulse's.
+  excitation_flip_angle:
+    unit: degree
+    value: 7
+
+  # archive Model.options.MT_Pulse_Shape / MT_Pulse_Bandwidth = gausshann / 200.
+  # The archive also carries MT_Pulse_SincTBW and MT_Pulse_Fermitransitiona; both are
+  # parameters of shapes this protocol does not use, so recording them would suggest they
+  # are live settings that an adapter should render.
+  mt_pulse_shape:
+    unit: none
+    value: gausshann
+  mt_pulse_bandwidth:
+    unit: Hz
+    value: 200
+
+  # archive Model.options.MT_Pulse_NofMTpulses = 600, and qmrust's recipe carries no
+  # equivalent field at all. Recorded because it is an acquisition fact and because it is
+  # NOT a safe default to leave to the tool: qMRLab V1's own default is 100, and
+  # matlab/qmrlab_ci_era1_protocol.m has to override it to 600 for V1 to be asked the same
+  # question as every other target.
+  mt_pulse_count:
+    unit: none
+    value: 600

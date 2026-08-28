@@ -1,0 +1,29 @@
+# Acquisition parameters for the `b1_afi` archive (spec 6.1). Values are qmrust's
+# recipes/non-bids/b1_afi_config.yaml, cross-checked against the archive's own Protocol
+# struct. There are no fit options -- the AFI estimate is closed form.
+#
+# Times are SECONDS everywhere in protocols/, never milliseconds.
+dataset: b1_afi
+
+parameters:
+  # archive Protocol.Sequence, Format 'nomFA' = 60 -- identical.
+  #
+  # Must be passed explicitly to every adapter: `qi afi --flip` defaults to 55, not 60,
+  # so omitting it scales the whole B1 map by 60/55 and nothing raises (spec 9). That is
+  # the reason this one-value file exists rather than each adapter carrying its own
+  # default.
+  nominal_flip_angle:
+    unit: degree
+    value: 60
+
+  # archive Protocol.Sequence, Format ['TR1' 'TR2'] = [20 100], in the order of the two
+  # acquisitions -- identical to these values read as milliseconds. The archive's Format
+  # strings carry NO unit for these two, unlike every other time field in this directory;
+  # milliseconds is qMRLab's b1_afi.m convention, and it is also the only reading under
+  # which 20 and 100 are physical repetition times. Only their RATIO enters the estimate
+  # (n = TR2/TR1), so a wrong unit here would not perturb any number this repo currently
+  # publishes -- which is exactly why it has to be stated rather than left to be inferred
+  # by the first adapter that does use the absolute value.
+  repetition_time:
+    unit: s
+    values: [0.020, 0.100]

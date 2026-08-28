@@ -1,0 +1,22 @@
+# Acquisition parameters for the `mtr` archive (spec 6.1): there are none, and that is
+# the declaration this file makes.
+#
+# MTR = 100 * (MToff - MTon) / MToff reads no acquisition parameter at all. The archive
+# agrees explicitly -- its FitResults carry `Protocol = []`, an empty struct rather than
+# an absent field -- and qmrust's recipes/non-bids/mt_ratio_config.yaml carries nothing
+# but the model name.
+#
+# The entry exists anyway so that "every dataset has a protocols/ entry" stays a checkable
+# invariant (tests/test_protocols.py) instead of a rule with one silent exception. An
+# absent file would be indistinguishable from an entry nobody got round to writing, and
+# mt_ratio is the single best-matched comparison SCT offers -- the one place where a
+# missing protocol would be read as an oversight rather than as a fact about the model.
+#
+# What DOES differ between tools here is not protocol but convention, and it is recorded
+# where it belongs: SCT's `-thr` defaults to 100 and clips MTR to +/-100 on real voxels
+# where qMRLab does not clip, and SCT's `-mt0` is the MT-OFF image (spec 9). Those are
+# adapter flags, not acquisition parameters, and putting them here would make this file
+# a config for one tool instead of a description of the scan.
+dataset: mtr
+
+parameters: {}

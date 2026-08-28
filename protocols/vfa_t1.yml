@@ -1,0 +1,22 @@
+# Acquisition parameters for the `vfa_t1` archive (spec 6.1). Values are qmrust's
+# recipes/non-bids/vfa_t1_config.yaml, cross-checked against the archive's own Protocol
+# struct. The fit algorithm (linear Fram linearization vs nonlinear refinement) is
+# deliberately absent: that is a per-version choice the benchmark measures.
+#
+# Times are SECONDS everywhere in protocols/, never milliseconds.
+dataset: vfa_t1
+
+parameters:
+  # archive Protocol.VFAData, Format ['FlipAngle' 'TR'] = [[3 0.015] [20 0.015]] --
+  # identical. Two volumes, in the order of VFAData's 4th dimension.
+  flip_angle:
+    unit: degree
+    values: [3, 20]
+
+  # One TR for the whole series, which the archive states per volume and twice over
+  # (0.015 for both rows) and which the linearization assumes. Split into a per-volume
+  # list only if an archive ever disagrees with itself here -- silently averaging two
+  # different TRs would bias T1 with nothing raising.
+  repetition_time:
+    unit: s
+    value: 0.015
