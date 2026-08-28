@@ -52,6 +52,20 @@ is byte-identical to the SledPikeRP recipe but for one token. Ramani is in fact 
 own default. Per-version `st`/`lb`/`ub`/`fx` defaults are left alone: that drift is what
 the benchmark measures.
 
+**`qmrlab@V1` carries the Ramani stream, and is expected to be an outlier.** Two era-1
+properties, both verified in source, make its `F` map sit apart from all fourteen later
+targets for reasons that are not version drift in the model:
+
+- `SPGR_prepare` runs before the B1 scaling at `V1`, so **B1 has no effect on Ramani there**
+  at all. Every later era applies `Prot.Angles = Prot.Angles * FitOpt.B1`.
+- `V1` lacks the `FitOpt.R1 = max(0.1, FitOpt.R1)` floor that `SPGR_fit.m` gained in v2.0.0,
+  so voxels with `R1obs < 0.1 s^-1` diverge on the V1 side only.
+
+Including it is the point rather than a cost. A cell that is permanently different is only
+noise if nobody says why; declared, it is the oldest published qMRLab behaviour measured
+against every release since, on the one model V1 supports. Both properties are declared in
+`comparability.yml` against `qmrlab@V1` so the site states them beside the number.
+
 ### 2.3 New dataset: `sct_mt`
 
 `mt0.nii.gz` / `mt1.nii.gz` / `t1w.nii.gz`, 192×192×22, from `sct_example_data`. Feeds
