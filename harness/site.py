@@ -36,7 +36,10 @@ TARGET_ORDER = [
 # while v3.0.0 pins R2026a, so the same qMRLab source ran on two different MATLAB
 # builds -- and a different build shifts lsqcurvefit's converged optimum by ~1e-7.
 # That is the confound spec §3.2 records matlab_release for, not nondeterminism.
-ITERATIVE = {"qmt_spgr", "mono_t2", "inversion_recovery"}
+# Both qMT streams belong here: Ramani and SledPikeRP are the same iterative
+# lsqcurvefit, so they carry the same sensitivity to the MATLAB build that this set
+# exists to caveat.
+ITERATIVE = {"qmt_spgr", "qmt_spgr_ramani", "mono_t2", "inversion_recovery"}
 
 SEQ = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7",
        "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b"]

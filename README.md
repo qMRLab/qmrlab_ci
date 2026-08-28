@@ -28,8 +28,12 @@ same for AxonDeepSeg.
 
 ## What gets compared
 
-**Models:** `qmt_spgr`, `inversion_recovery`, `vfa_t1`, `b1_dam`, `b1_afi`, `mono_t2`,
-`mt_ratio`, `mt_sat`.
+**Models:** `qmt_spgr`, `qmt_spgr_ramani`, `inversion_recovery`, `vfa_t1`, `b1_dam`,
+`b1_afi`, `mono_t2`, `mt_ratio`, `mt_sat`.
+
+`qmt_spgr` and `qmt_spgr_ramani` are the same acquisition fitted with two different qMT
+sub-models. The second exists because QUIT implements only Ramani, so without it there is
+no cross-software qMT comparison at all.
 
 **Targets:** qMRLab `V1`, `v2.0.0`–`v2.0.5`, `v2.1.0`–`v3.0.0`, `master`, plus
 `qmrust@main`. Not every model exists in every release — `mt_ratio` arrives in v2.3.0,
@@ -112,7 +116,8 @@ The fifteen targets span three incompatible APIs, which is why drive logic lives
 | CamelCase | `v2.0.0`–`v2.0.5` | `FitData(data, Model, wait)` with `Model = SPGR()` |
 | snake_case | `v2.1.0`–`master` | current object API |
 
-`V1` contributes only `qmt_spgr`, and its shipped default protocol describes a *different*
+`V1` contributes only qMT — both sub-model streams of it — and its shipped default
+protocol describes a *different*
 acquisition than the canonical dataset, so its protocol is reconstructed to match. That
 reconstruction is the least certain thing in the repo — see the spec.
 

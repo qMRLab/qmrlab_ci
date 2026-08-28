@@ -186,7 +186,20 @@ def main(argv=None) -> int:
     data, root = pathlib.Path(args.data), pathlib.Path(args.root)
     (root / "masks").mkdir(exist_ok=True)
 
-    for model_id in load_models(root):
+    models = load_models(root)
+    for model_id in models:
+        # A model whose declared mask is not masks/<its own id>.nii.gz is scored on
+        # another model's mask, so there is nothing here to derive for it. That is what
+        # qmt_spgr_ramani does: it is the same acquisition as qmt_spgr fitted with a
+        # different sub-model, so it shares the file rather than owning a byte-identical
+        # copy. Keyed off the declaration rather than a name list, because the mask a
+        # model is scored on is a fact models/*.yml already states -- and because the
+        # alternative, falling through to DERIVED_FROM[model_id], is a bare KeyError that
+        # says nothing about why.
+        if models[model_id].mask != f"masks/{model_id}.nii.gz":
+            print(f"{model_id}: shares {models[model_id].mask}, nothing to derive")
+            continue
+
         interior = None
         if model_id in SHIPPED_MASK:
             dataset, name = SHIPPED_MASK[model_id]
