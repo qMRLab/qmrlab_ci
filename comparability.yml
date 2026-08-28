@@ -1,0 +1,115 @@
+# What may be compared with what, and for what (spec §5.5, §7, §7.3).
+#
+# Read by harness/comparability.py. Each entry declares one class for a set of
+# (model, map, pair) slots:
+#
+#   same-estimator     same model equation, settings aligned. Red is assignable.
+#   related-estimator  a genuinely different estimator, or a settings difference that
+#                      cannot be closed. Always amber, never red, whatever the numbers.
+#   incomparable       do not build the pair at all.
+#
+# A pair member names either a software (`quit`) or one specific target (`qmrlab@V1`),
+# and the more specific declaration wins. Order does not matter.
+#
+# NOT declaring a pair means same-estimator: that is what all fourteen qMRLab-versus-
+# qMRLab pairs are, and making the safe-looking class the default would silence red
+# everywhere by saying nothing. So an entry here is always a claim that a red flag would
+# be WRONG, and `reason` is the argument for it -- rendered as visible text on the site,
+# following the "What did not run" list rather than a tooltip.
+#
+# `input_domain: violated` is orthogonal to the class and overrules it: red regardless,
+# because amber means "expected to differ" and would understate a tool being fed data its
+# documented model does not support.
+
+entries:
+  # ---- qmt_spgr_ramani: qMRLab / qmrust vs QUIT (spec §6.3) -----------------------
+  # Every map, not only the three with measured shifts: the lineshape, the bounds and the
+  # extra degree of freedom act on the fit, so no parameter of it comes out of the same
+  # estimator. Declaring only kr/T2f/F would leave the other three able to go red for a
+  # cause already written down here.
+  - model: qmt_spgr_ramani
+    maps: [F, kr, R1f, R1r, T2f, T2r]
+    pairs:
+      - [qmrlab, quit]
+      - [qmrust, quit]
+    class: related-estimator
+    reason: >-
+      qMRLab and qmrust extrapolate the super-Lorentzian near resonance for offsets below
+      1500 Hz; QUIT computes the raw integral. This protocol's two lowest offsets are 443
+      and 1088 Hz, so 4 of 10 volumes are affected -- measured on noise-free data, kr is
+      +31.8%, T2f +34.9% and F -6.7%. It cannot be closed with --lineshape=<json>, whose
+      interpolation presupposes a scaling law the extrapolation breaks. QUIT's start point
+      and bounds are compile-time literals in qi_qmt.cpp with no CLI flag, and it always
+      fits M0_f -- 5 varying parameters against qMRLab's 4. Everything that could be held
+      equal was (--R1b=1.0, --lineshape=Superlorentzian, --T1 as 1/R1 floored at
+      R1obs >= 0.1, --B1 as the same ratio map, --f0 omitted with B0 zeroed, and gausshann
+      p1=0.348364675 p2=0.249536344 for Trf=0.0102 s).
+
+  # ---- qmt_spgr_ramani: qmrlab@V1 against its own family (spec §2.2, §6.3) --------
+  # Target-level, not software-level: this is era-1 behaviour and painting the other
+  # thirteen qMRLab targets with it would hide exactly the version drift the benchmark
+  # exists to measure. Deliberately NOT declared against quit -- the entry above already
+  # paints those cells amber with the lineshape cause, which is the dominant one there,
+  # and a second declaration would only change which true sentence the site prints.
+  - model: qmt_spgr_ramani
+    maps: [F, kr, R1f, R1r, T2f, T2r]
+    pairs:
+      - ["qmrlab@V1", qmrlab]
+      - ["qmrlab@V1", qmrust]
+    class: related-estimator
+    reason: >-
+      qmrlab@V1 runs SPGR_prepare before the B1 scaling, so the B1 map has no effect on
+      its Ramani fit at all; every later era applies Prot.Angles = Prot.Angles * FitOpt.B1.
+      V1 also lacks the FitOpt.R1 = max(0.1, FitOpt.R1) floor that SPGR_fit.m gained in
+      v2.0.0, so voxels with R1obs < 0.1 s^-1 diverge on the V1 side only. Both properties
+      are verified in era-1 source and show most on F. This is the oldest published qMRLab
+      behaviour, not version drift in the model.
+
+  # ---- mono_t2: qMRLab / qmrust vs QUIT (spec §6.3) -------------------------------
+  - model: mono_t2
+    maps: [T2, M0]
+    pairs:
+      - [qmrlab, quit]
+      - [qmrust, quit]
+    class: related-estimator
+    reason: >-
+      qi multiecho --algo=n (NLLS) pins T2 at its bound on scanner-scaled data and our
+      SEdata reaches 4095, so log-linear is the only QUIT algorithm that runs at all,
+      while qMRLab and qmrust fit a nonlinear exponential. An estimator mismatch baked
+      into the only configuration that produces numbers.
+
+  # ---- mt_sat / T1: anything vs SCT (spec §6.3) -----------------------------------
+  # Only the T1 map. MTsat and MTR are left undeclared on purpose: they are the same
+  # quantity computed the same way, so red there would be a real finding.
+  - model: mt_sat
+    maps: [T1]
+    pairs:
+      - [qmrlab, sct]
+      - [qmrust, sct]
+      - [quit, sct]
+    class: related-estimator
+    reason: >-
+      SCT's T1 is the Helms two-point rational approximation embedded in its MTsat
+      calculation, not a VFA fit. Same map name, different estimator.
+
+  # ---- inversion_recovery / T1: qMRLab / qmrust vs QUIT (spec §2.4, §7.3) ---------
+  # The worked input-domain case. Red comes from input_domain, not from the class: this
+  # is not a tool that models the data differently, it is a tool being handed data its
+  # own model cannot represent, and amber would say the wrong thing about it.
+  - model: inversion_recovery
+    maps: [T1]
+    pairs:
+      - [qmrlab, quit]
+      - [qmrust, quit]
+    class: related-estimator
+    reason: >-
+      qi irtse fits 2 parameters with the recovery physics explicit, while qMRLab and
+      qmrust fit 3 (a + b*exp(-TI/T1), magnitude method) and absorb incomplete recovery
+      into a and b.
+    input_domain: violated
+    input_domain_reason: >-
+      qi irtse applies no abs() to its residuals, so it expects polarity-restored data;
+      this archive is magnitude with the null point at TI ~ 0.62 s, inside the fitted TI
+      range, so below it the fit is fitting noise. The data is passed unmodified on
+      purpose -- cleaning it up first would report what QUIT does after we repaired its
+      input for it, which is not what a user gets.
