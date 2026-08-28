@@ -13,6 +13,17 @@ _FACTORS: dict[tuple[str, str], float] = {
     ("fraction", "percent"): 100.0,
     ("Hz", "s^-1"): 1.0,
     ("s^-1", "Hz"): 1.0,
+    # A B1 map written as 'au' in this repo is a ratio in which 1.0 means the nominal
+    # flip angle was achieved, so it is dimensionally a fraction: this pair is an
+    # identity, not a rescale. It has to be in the table BEFORE any model declares
+    # 'fraction', because every adapter record already in results/ declares 'au' —
+    # flipping models/b1_*.yml first would leave ('au', 'fraction') missing and fail
+    # both B1 models on every target at once. The pair exists so a second software
+    # that reports B1 as percent-of-nominal (100 = nominal, which is what hMRI writes)
+    # can declare 'percent' and be scaled, instead of declaring 'au' and publishing a
+    # 100x error as though it were a fit difference.
+    ("au", "fraction"): 1.0,
+    ("fraction", "au"): 1.0,
 }
 
 KNOWN_UNITS = {"s", "ms", "percent", "fraction", "au", "Hz", "s^-1"}
