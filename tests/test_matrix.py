@@ -48,3 +48,30 @@ def test_every_known_lane_has_a_key_even_when_empty():
 
     assert set(m) == set(KNOWN_LANES)
     assert m["python"] == []
+    # `native` is in that set from the moment the lane is named, before any target
+    # declares it: an absent output reads to the workflow as a skipped job, which is
+    # indistinguishable from a lane that simply has no work (spec §4.1).
+    assert "native" in m
+
+
+def test_a_native_target_lands_in_its_own_lane_carrying_no_toolchain_fields():
+    """§4.1: the native lane supplies checkout, Python, data and a cache — nothing
+    else — so an entry must not smuggle in the MATLAB-only setup fields."""
+    from harness.config import TargetSpec
+
+    quit_target = TargetSpec(
+        id="quit@v3.4", software="quit", version="v3.4", lane="native",
+        era=None, matlab_release=None, matlab_products=(),
+        source_repo="spinicist/QUIT", source_ref="v3.4",
+        models=("mt_ratio", "mt_sat"), repeats={"default": 1},
+    )
+
+    m = build_matrices({quit_target.id: quit_target})
+    entry = m["native"][0]
+
+    assert entry["id"] == "quit@v3.4"
+    assert entry["source_ref"] == "v3.4"
+    assert entry["models"] == ["mt_ratio", "mt_sat"]
+    assert "era" not in entry
+    assert "matlab_release" not in entry
+    assert "matlab_products" not in entry
