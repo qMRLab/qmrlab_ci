@@ -7,13 +7,28 @@ from harness.config import ConfigError, load_models, load_sources
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 EXPECTED_MODELS = {
-    "qmt_spgr", "inversion_recovery", "vfa_t1", "b1_dam",
+    "qmt_spgr", "qmt_spgr_ramani", "inversion_recovery", "vfa_t1", "b1_dam",
     "b1_afi", "mono_t2", "mt_ratio", "mt_sat",
 }
 
 
-def test_catalog_declares_exactly_the_eight_models():
+def test_catalog_declares_exactly_the_nine_models():
     assert set(load_models(ROOT)) == EXPECTED_MODELS
+
+
+def test_the_two_qmt_streams_are_one_question_asked_twice():
+    """Spec §2.2: qmt_spgr_ramani is qmt_spgr's dataset, mask and maps under a second
+    id, because QUIT's `qi qmt` implements only Ramani while every qMRLab target and
+    qmrust default to SledPikeRP. The sub-model is the ONLY difference, and it lives in
+    the drivers — if these ever diverge here, the two streams stop being comparable and
+    a sub-model result would be reporting a dataset or unit change instead."""
+    models = load_models(ROOT)
+    sledpike, ramani = models["qmt_spgr"], models["qmt_spgr_ramani"]
+
+    assert ramani.id != sledpike.id
+    assert ramani.dataset == sledpike.dataset
+    assert ramani.mask == sledpike.mask
+    assert ramani.maps == sledpike.maps
 
 
 def test_every_model_maps_to_a_declared_dataset():
@@ -24,16 +39,19 @@ def test_every_model_maps_to_a_declared_dataset():
 
 
 def test_dataset_names_differ_from_model_ids_where_expected():
-    """Four of eight differ; the coincidences must not be mistaken for a rule."""
+    """Five of nine differ; the coincidences must not be mistaken for a rule."""
     models = load_models(ROOT)
 
     assert models["inversion_recovery"].dataset == "ir"
     assert models["qmt_spgr"].dataset == "qmt"
+    assert models["qmt_spgr_ramani"].dataset == "qmt"
     assert models["mt_ratio"].dataset == "mtr"
     assert models["mt_sat"].dataset == "mtsat"
 
 
 def test_all_eight_archives_are_checksummed():
+    # Still eight: nine models draw on eight datasets, because both qMT streams
+    # fit the same `qmt` archive.
     for source in load_sources(ROOT).values():
         assert len(source.sha256) == 64
         assert source.bytes > 0

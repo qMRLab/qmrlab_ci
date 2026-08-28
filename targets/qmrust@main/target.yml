@@ -3,5 +3,5 @@ software: qmrust
 version: main
 lane: rust
 source: {repo: qMRLab/qmrust, ref: main}
-models: [qmt_spgr, inversion_recovery, vfa_t1, b1_dam, b1_afi, mono_t2, mt_ratio, mt_sat]
-repeats: {default: 5, qmt_spgr: 1}
+models: [qmt_spgr, qmt_spgr_ramani, inversion_recovery, vfa_t1, b1_dam, b1_afi, mono_t2, mt_ratio, mt_sat]
+repeats: {default: 5, qmt_spgr: 1, qmt_spgr_ramani: 1}

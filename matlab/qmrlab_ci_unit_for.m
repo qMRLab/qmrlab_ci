@@ -22,8 +22,14 @@ function unit = qmrlab_ci_unit_for(modelId, mapName, era)
     switch key
         case 'mono_t2/T2';             unit = 'ms';
         case 'inversion_recovery/T1';  unit = 'ms';
-        case 'qmt_spgr/T2f'; unit = 's';
-        case 'qmt_spgr/T2r'; unit = 's';
+        % Both qMT streams, listed explicitly. The switch is keyed on 'model/map', so
+        % a missing id here does NOT raise -- it falls through to 'au', and units.py
+        % maps ('au','fraction') to 1.0, which would let a Ramani F map through
+        % unconverted and unremarked while kr/R1f/R1r failed with an unrelated
+        % 'no conversion from au to s^-1'. The sub-model changes how these six are
+        % estimated, never what they are, so the units are qmt_spgr's verbatim.
+        case {'qmt_spgr/T2f', 'qmt_spgr_ramani/T2f'}; unit = 's';
+        case {'qmt_spgr/T2r', 'qmt_spgr_ramani/T2r'}; unit = 's';
         case {'vfa_t1/T1', 'mt_sat/T1'}; unit = 's';
         case 'mt_ratio/MTR'; unit = 'percent';
         case 'mt_sat/MTR';   unit = 'percent';
@@ -33,8 +39,10 @@ function unit = qmrlab_ci_unit_for(modelId, mapName, era)
             else
                 unit = 'percent';
             end
-        case 'qmt_spgr/F';   unit = 'fraction';
-        case {'qmt_spgr/kr','qmt_spgr/R1f','qmt_spgr/R1r'}; unit = 's^-1';
+        case {'qmt_spgr/F', 'qmt_spgr_ramani/F'}; unit = 'fraction';
+        case {'qmt_spgr/kr','qmt_spgr/R1f','qmt_spgr/R1r', ...
+              'qmt_spgr_ramani/kr','qmt_spgr_ramani/R1f','qmt_spgr_ramani/R1r'}
+            unit = 's^-1';
         otherwise; unit = 'au';
     end
 end

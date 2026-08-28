@@ -1,0 +1,34 @@
+# A near-duplicate of models/qmt_spgr.yml, on purpose. A model id in this catalog names
+# a COMPARISON STREAM -- the one question every target is asked -- not a piece of
+# software, so two sub-models of the same qMT fit are two ids rather than one id with a
+# variant field. Every consumer then stays as it is: analyze.py compares maps within an
+# id, the site groups rows by id, and results land under maps/<id>/ and records/<id>.json
+# without any of them having to learn what a sub-model is. Only the drivers know, and
+# each sets one field (spec 2.2).
+#
+# The stream exists because QUIT's `qi qmt` implements ONLY Ramani while all 14 qMRLab
+# targets and qmrust fit SledPikeRP by default. Without it there is no three-way qMT
+# comparison at all. qmt_spgr is left untouched and QUIT is simply absent from it.
+#
+# The mask is qmt_spgr's own file, not a copy: same dataset, same voxels, and a second
+# byte-identical masks/*.nii.gz would be one more thing to keep in step for no gain.
+# scripts/derive_masks.py keys its sources by model id and writes masks/<id>.nii.gz, so
+# it needs to be taught to skip this id rather than to derive a second mask for it.
+#
+# CAVEAT, qmrlab@V1 (spec 6.3): of the 14 qMRLab targets, V1 alone ignores the B1 map
+# when fitting Ramani and V1 alone lacks the max(0.1, R1obs) floor later versions apply.
+# Expect its F map to sit apart from the other 13 for a reason that is NOT version drift
+# in the estimator. Repeated in matlab/qmrlab_ci_era1_protocol.m, next to the code.
+id: qmt_spgr_ramani
+dataset: qmt
+mask: masks/qmt_spgr.nii.gz
+# The same six fitted parameters and units as models/qmt_spgr.yml -- the sub-model
+# changes how they are estimated, not what they are. kf and resnorm stay excluded for
+# that file's reason: derived/diagnostic, not reliably present in every era.
+maps:
+  - {name: F,   unit: fraction}
+  - {name: kr,  unit: "s^-1"}
+  - {name: R1f, unit: "s^-1"}
+  - {name: R1r, unit: "s^-1"}
+  - {name: T2f, unit: s}
+  - {name: T2r, unit: s}

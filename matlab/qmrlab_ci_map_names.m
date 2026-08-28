@@ -9,7 +9,10 @@ function names = qmrlab_ci_map_names(modelId, era)
 %   missingOutput failure. Every other model/era combination gets the full
 %   canonical list, unchanged.
     switch modelId
-        case 'qmt_spgr';           names = {'F','kr','R1f','R1r','T2f','T2r'};
+        % Both qMT streams produce the same six xnames -- SledPikeRP and Ramani are
+        % two ways of estimating one parameter set, not two parameter sets.
+        case {'qmt_spgr','qmt_spgr_ramani'}
+            names = {'F','kr','R1f','R1r','T2f','T2r'};
         case 'inversion_recovery'; names = {'T1'};
         case 'vfa_t1';             names = {'T1','M0'};
         case 'b1_dam';             names = {'B1map'};

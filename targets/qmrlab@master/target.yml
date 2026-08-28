@@ -6,5 +6,5 @@ era: 3
 matlab_release: latest
 matlab_products: [Image_Processing_Toolbox, Optimization_Toolbox, Statistics_and_Machine_Learning_Toolbox]
 source: {repo: qMRLab/qMRLab, ref: master}
-models: [qmt_spgr, inversion_recovery, vfa_t1, b1_dam, mt_sat, mt_ratio, mono_t2, b1_afi]
-repeats: {default: 5, qmt_spgr: 1}
+models: [qmt_spgr, qmt_spgr_ramani, inversion_recovery, vfa_t1, b1_dam, mt_sat, mt_ratio, mono_t2, b1_afi]
+repeats: {default: 5, qmt_spgr: 1, qmt_spgr_ramani: 1}

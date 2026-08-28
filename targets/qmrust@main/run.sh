@@ -146,7 +146,10 @@ prepare_input() {
 map_outputs() {
   case "$1" in
     inversion_recovery) echo "T1.nii.gz:T1:s" ;;
-    qmt_spgr)           echo "F.nii.gz:F:fraction kr.nii.gz:kr:s^-1 R1f.nii.gz:R1f:s^-1 R1r.nii.gz:R1r:s^-1 T2f.nii.gz:T2f:s T2r.nii.gz:T2r:s" ;;
+    # Both qMT streams: qmrust's OUTPUT_NAMES is sub-model-independent, so SledPikeRP
+    # and Ramani write the same six files with the same meanings and units.
+    qmt_spgr|qmt_spgr_ramani)
+                        echo "F.nii.gz:F:fraction kr.nii.gz:kr:s^-1 R1f.nii.gz:R1f:s^-1 R1r.nii.gz:R1r:s^-1 T2f.nii.gz:T2f:s T2r.nii.gz:T2r:s" ;;
     mono_t2)            echo "T2.nii.gz:T2:s M0.nii.gz:M0:au" ;;
     vfa_t1)             echo "T1.nii.gz:T1:s M0.nii.gz:M0:au" ;;
     mt_ratio)           echo "MTR.nii.gz:MTR:percent" ;;
@@ -165,6 +168,12 @@ fit_args() {
     # FitResults. Using qmrust's Ramani recipe here would compare two different models and
     # publish the difference as a cross-implementation result.
     qmt_spgr)           echo "--mat-dir $(dirname "$(find_one qmt MTdata.mat)") --config $RECIPES/qmt_config_sledpikerp.yaml" ;;
+    # The Ramani stream, which exists so QUIT can be compared at all: `qi qmt`
+    # implements ONLY Ramani. Same archive, same --mat-dir, same six outputs -- the two
+    # recipes are byte-identical but for their `model:` line, so this case and the one
+    # above differ in exactly the quantity being studied. Ramani is qmrust's own
+    # default, so unlike the SledPikeRP case this recipe asks it for nothing unusual.
+    qmt_spgr_ramani)    echo "--mat-dir $(dirname "$(find_one qmt MTdata.mat)") --config $RECIPES/qmt_config_ramani.yaml" ;;
     mono_t2)             echo "--data $(find_one mono_t2 SEdata.nii.gz) --mask $(find_one mono_t2 Mask.nii.gz) --config $RECIPES/mono_t2_config.yaml" ;;
     vfa_t1)              echo "--data $(find_one vfa_t1 VFAData.nii.gz) --mask $(find_one vfa_t1 Mask.nii.gz) --b1map $(find_one vfa_t1 B1map.nii.gz) --config $RECIPES/vfa_t1_config.yaml" ;;
     b1_dam)               echo "--data $work/input/stacked.nii.gz --config $RECIPES/b1_dam_config.yaml" ;;
@@ -228,10 +237,16 @@ print(load_targets('.')['$TARGET_ID'].repeats_for('$model'))
     continue
   fi
 
+  # The mask comes from models/<model>.yml, NOT from masks/<model>.nii.gz. Those two
+  # agreed for every model until qmt_spgr_ramani, which fits the same voxels of the same
+  # dataset as qmt_spgr and therefore declares qmt_spgr's mask file rather than a
+  # byte-identical copy of it. Reading the declaration keeps the count this record
+  # publishes identical to the one harness/analyze.py masks with.
   voxels=$(python3 -c "
+from harness.config import load_models
 from harness.nifti import read_nifti
 import numpy as np
-print(int(np.count_nonzero(read_nifti('masks/$model.nii.gz').values)))")
+print(int(np.count_nonzero(read_nifti(load_models('.')['$model'].mask).values)))")
 
   python3 -m scripts.emit_record --out "$OUT_ROOT/records/$model.json" \
     --target "$TARGET_ID" --software qmrust --version main --model "$model" \

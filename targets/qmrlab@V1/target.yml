@@ -6,5 +6,5 @@ era: 1
 matlab_release: R2021a
 matlab_products: [Image_Processing_Toolbox, Optimization_Toolbox, Statistics_and_Machine_Learning_Toolbox]
 source: {repo: qMRLab/qMRLab, ref: V1}
-models: [qmt_spgr]
-repeats: {default: 5, qmt_spgr: 1}
+models: [qmt_spgr, qmt_spgr_ramani]
+repeats: {default: 5, qmt_spgr: 1, qmt_spgr_ramani: 1}

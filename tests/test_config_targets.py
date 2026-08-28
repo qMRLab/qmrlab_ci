@@ -22,14 +22,26 @@ def test_model_availability_matches_the_spec_matrix():
     make a missing model indistinguishable from a broken install."""
     t = load_targets(ROOT)
 
-    assert t["qmrlab@V1"].models == ("qmt_spgr",)
+    # V1 contributes qMT and nothing else, but BOTH sub-model streams of it. The Ramani
+    # stream is not a capability V1 gained -- 'Model' has been selectable since qMTLab --
+    # it is a second fit of the same data this benchmark now asks every target for.
+    assert t["qmrlab@V1"].models == ("qmt_spgr", "qmt_spgr_ramani")
     assert "b1_afi" not in t["qmrlab@v2.4.1"].models
     assert "b1_afi" in t["qmrlab@v2.5.0"].models
     assert "mono_t2" not in t["qmrlab@v2.3.0"].models
     assert "mono_t2" in t["qmrlab@v2.4.0"].models
     assert "mt_ratio" not in t["qmrlab@v2.2.0"].models
     assert "mt_ratio" in t["qmrlab@v2.3.0"].models
-    assert len(t["qmrlab@v2.0.0"].models) == 5
+    assert len(t["qmrlab@v2.0.0"].models) == 6
+
+    # Every target that fits qMT fits both streams. Asserted as a pair rather than per
+    # target: the streams differ only in FitOpt.model, so a target carrying one without
+    # the other is a wiring slip, and it would surface as an unexplained hole in the
+    # cross-software qMT comparison rather than as the mistake it is.
+    for target in t.values():
+        assert ("qmt_spgr" in target.models) == ("qmt_spgr_ramani" in target.models), (
+            f"{target.id} declares only one of the two qMT streams"
+        )
 
 
 def test_every_matlab_target_declares_which_era_driver_runs_it():

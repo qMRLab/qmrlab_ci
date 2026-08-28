@@ -10,8 +10,22 @@ function [data, Model] = qmrlab_ci_load_era3(dataRoot, modelId)
             Model = inversion_recovery;
             data.IRData = qmrlab_ci_load_any(dataRoot, 'ir', 'IRData.mat');
             data.Mask   = qmrlab_ci_load_any(dataRoot, 'ir', 'Mask.mat');
-        case 'qmt_spgr'
+        case {'qmt_spgr', 'qmt_spgr_ramani'}
             Model = qmt_spgr;
+            % Two comparison streams through ONE qMRLab class: the sub-model is a
+            % plain options field named exactly 'Model'. qmt_spgr is left alone rather
+            % than assigned 'SledPikeRP' explicitly -- button2opts takes the FIRST
+            % entry of qmt_spgr.m's {'SledPikeRP','SledPikeCW','Yarnykh','Ramani'} as
+            % the default, so never touching the field is what makes that stream the
+            % version's OWN default rather than a choice this benchmark imposed, and
+            % the difference between those two is what the benchmark measures.
+            %
+            % st/lb/ub/fx and fittingconstraints_* are likewise left at each version's
+            % defaults for both streams; see qmrlab_ci_load_era2.m for the two spreads
+            % that produces, which are real per-version drift and not a harness bug.
+            if strcmp(modelId, 'qmt_spgr_ramani')
+                Model.options.Model = 'Ramani';
+            end
             data.MTdata = qmrlab_ci_load_any(dataRoot, 'qmt', 'MTdata.mat');
             data.Mask   = qmrlab_ci_load_any(dataRoot, 'qmt', 'Mask.mat');
             data.R1map  = qmrlab_ci_load_any(dataRoot, 'qmt', 'R1map.mat');

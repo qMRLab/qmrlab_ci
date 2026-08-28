@@ -1,16 +1,34 @@
 function [data, Model] = qmrlab_ci_load_era2(dataRoot, modelId)
 %QMRLAB_CI_LOAD_ERA2 Assemble inputs for the CamelCase model classes (v2.0.0-v2.0.5).
 %
-%   Only five models exist in this era; targets/qmrlab@v2.0.*/target.yml declares
-%   exactly those, so an unhandled id here means the declaration and the driver have
-%   drifted apart and should fail loudly rather than silently skip.
+%   Only five model classes exist in this era; targets/qmrlab@v2.0.*/target.yml
+%   declares exactly those, so an unhandled id here means the declaration and the
+%   driver have drifted apart and should fail loudly rather than silently skip. Six
+%   model IDS map onto them: qmt_spgr and qmt_spgr_ramani are two comparison streams
+%   through the one SPGR class, separated by a single options field.
     switch modelId
         case 'inversion_recovery'
             Model = InversionRecovery;
             data.IRData = qmrlab_ci_load_any(dataRoot, 'ir', 'IRData.mat');
             data.Mask   = qmrlab_ci_load_any(dataRoot, 'ir', 'Mask.mat');
-        case 'qmt_spgr'
+        case {'qmt_spgr', 'qmt_spgr_ramani'}
             Model = SPGR;
+            % Same selector as era 3 (a plain options field named exactly 'Model'),
+            % and the same reason for touching it in only one branch: button2opts
+            % takes the FIRST entry of the class's {'SledPikeRP','SledPikeCW',
+            % 'Yarnykh','Ramani'} cell as the default, so qmt_spgr stays SledPikeRP by
+            % never being assigned -- the version's own default, not this benchmark's.
+            if strcmp(modelId, 'qmt_spgr_ramani')
+                Model.options.Model = 'Ramani';
+            end
+            % st/lb/ub/fx and fittingconstraints_* are NOT normalised across versions
+            % for either stream: that drift is the quantity being measured. Two spreads
+            % are known and recorded here so a later reader meets them as declared facts
+            % rather than as a suspected harness bug -- v2.0.0, 2.0.1 and 2.0.2 start kr
+            % at 10 with ub 500 where later versions use 30 and 100, and all five of
+            % v2.0.0-v2.0.5 set lb(F) = lb(kr) = 0 where later versions use 1e-4. Both
+            % hit the two streams alike, so they do not confound Ramani against
+            % SledPikeRP within one version -- only version against version.
             data.MTdata = qmrlab_ci_load_any(dataRoot, 'qmt', 'MTdata.mat');
             data.Mask   = qmrlab_ci_load_any(dataRoot, 'qmt', 'Mask.mat');
             data.R1map  = qmrlab_ci_load_any(dataRoot, 'qmt', 'R1map.mat');
