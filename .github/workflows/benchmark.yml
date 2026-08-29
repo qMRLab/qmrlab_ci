@@ -56,6 +56,18 @@ jobs:
           name: canonical-inputs
           path: osf-data
           retention-days: 7
+      # Three archives ship .mat only (ir, qmt, mtr), and the four multi-volume models
+      # need their inputs stacked in a declared order. Done ONCE here rather than per
+      # adapter, for the reason canonical-inputs exists at all: every non-MATLAB lane
+      # must fit byte-identical inputs. The alternative -- each lane converting for
+      # itself -- would make SCT's inputs a function of a qmrust commit, since the only
+      # other converter in the repo is `qmrust bidsify`.
+      - run: python -m scripts.mat_to_nifti --data osf-data --out converted
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canonical-inputs-nifti
+          path: converted
+          retention-days: 7
 
   plan:
     runs-on: ubuntu-latest
@@ -64,6 +76,7 @@ jobs:
     outputs:
       matlab: ${{ steps.gen.outputs.matlab }}
       rust: ${{ steps.gen.outputs.rust }}
+      native: ${{ steps.gen.outputs.native }}
       run_started_utc: ${{ steps.stamp.outputs.value }}
     steps:
       - uses: actions/checkout@v4
@@ -186,8 +199,64 @@ jobs:
           name: results-${{ matrix.target.id }}
           path: results/${{ matrix.target.id }}
 
+  # The native lane: the target's own setup.sh provisions its whole toolchain and this
+  # job supplies only checkout, Python, the data artifacts and a cache. That is why it is
+  # one job rather than one per external tool -- QUIT is `curl | tar` and SCT is
+  # `install_sct -iyc`, and a shared step would have to be one of them behind an `if:`,
+  # which is precisely what splitting by lane exists to avoid.
+  fit-native:
+    needs: [prepare-data, plan]
+    if: ${{ needs.plan.outputs.native != '[]' }}
+    runs-on: ubuntu-latest
+    # SCT's install is ~2 min cold and its two fits are seconds; QUIT installs in ~2 s.
+    # The headroom is for a cold cache and a slow OSF day, not for the fitting.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.native) }}
+    env:
+      QMRLAB_CI_RUN_STARTED: ${{ needs.plan.outputs.run_started_utc }}
+      QMRLAB_CI_SOURCE_REPO: ${{ matrix.target.source_repo }}
+      QMRLAB_CI_SOURCE_REF: ${{ matrix.target.source_ref }}
+      QMRLAB_CI_CONVERTED: ${{ github.workspace }}/converted
+      # SCT's install_sct refuses non-interactively when its install path exceeds 107
+      # characters. $HOME/sct is short and stable; the job workspace is not guaranteed to
+      # be. Exported here rather than defaulted in setup.sh so the constraint is visible
+      # where the runner is chosen.
+      QMRLAB_CI_SCT_HOME: ${{ github.workspace }}/../sct
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: canonical-inputs, path: osf-data}
+      - uses: actions/download-artifact@v4
+        with: {name: canonical-inputs-nifti, path: converted}
+
+      # NOT cached yet, deliberately. SCT installs in ~124 s on a hosted runner and QUIT
+      # in ~2 s, so the saving is small, while a cache keyed wrongly would silently serve
+      # a previous version's tree under this version's label -- the one failure a
+      # version-pinned benchmark must not have. Add it once the lane is proven green.
+      - run: bash "targets/${{ matrix.target.id }}/setup.sh"
+      - run: |
+          bash "targets/${{ matrix.target.id }}/run.sh" \
+            osf-data "results/${{ matrix.target.id }}" "${{ matrix.target.id }}" \
+            ${{ join(matrix.target.models, ' ') }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.target.id }}
+          path: results/${{ matrix.target.id }}
+
   analyze:
-    needs: [plan, fit-matlab, fit-rust]
+    # fit-native MUST be here. analyze downloads with `pattern: results-*`, so a lane
+    # missing from needs simply is not waited for, its artifacts do not exist yet, and
+    # every one of its cells renders as `missing` -- a wiring mistake wearing the costume
+    # of a dead job.
+    needs: [plan, fit-matlab, fit-rust, fit-native]
     # !cancelled(), NOT always(): always() also runs after a CANCELLATION, and a
     # cancelled run typically means most jobs never finished -- fit-matlab and
     # fit-rust get killed mid-matrix, not "not installed". Publishing whatever the
