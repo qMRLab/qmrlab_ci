@@ -78,19 +78,44 @@ entries:
       while qMRLab and qmrust fit a nonlinear exponential. An estimator mismatch baked
       into the only configuration that produces numbers.
 
-  # ---- mt_sat / T1: anything vs SCT (spec §6.3) -----------------------------------
-  # Only the T1 map. MTsat and MTR are left undeclared on purpose: they are the same
-  # quantity computed the same way, so red there would be a real finding.
+  # ---- mt_sat: qMRLab / qmrust vs SCT --------------------------------------------
+  # MEASURED 2026-08-28 by running SCT 7.3 against osf-data/mtsat, NOT read from source.
+  #
+  # An earlier draft of this entry declared T1 related-estimator because "SCT's T1 is the
+  # Helms two-point rational approximation, not a VFA fit" (spec §6.3). That is FALSE
+  # within this model, and the spike refuted it: qMRLab's mt_sat T1 is the SAME Helms
+  # rational approximation, and SCT reproduces osf-data/mtsat/FitResults/T1.nii.gz with
+  # max absolute difference 0.0 across 1,391,756 in-mask voxels wherever SCT's clip does
+  # not fire. Declaring it related-estimator would have painted amber a cell that is
+  # EXACT, and attributed a clipping convention to a modelling difference -- the precise
+  # confusion spec §1 says this whole design exists to prevent. The §6.3 sentence is true
+  # only of SCT's mt_sat T1 against the separate vfa_t1 MODEL.
+  #
+  # What actually differs is two hardcoded clips in spinalcordtoolbox/qmri/mt.py, neither
+  # of which has a CLI flag, so neither can be aligned away:
+  #   r1_threshold = 0.01     -> T1 = 0        105,861 in-mask voxels (7.07% of the full
+  #                                            mask), 643 (0.11%) of the interior mask
+  #   mtsat_threshold = 1     -> MTsat = 0      34,087 / 399
+  # Excluding those voxels the two agree to 2.84e-14 with ccc = 1.0 and pearson_r = 1.0.
+  #
+  # Note the qMRLab-side mechanism is NOT "R1 = 0 gives T1 = Inf", which spec §7.2
+  # predicted: of the 105,861 voxels SCT zeroes, 102,752 have R1 strictly NEGATIVE and
+  # only 3,109 have 0 <= R1 < 0.01. qMRLab publishes large negative T1 there, down to
+  # -10,782 s. The Inf voxels are almost all OUTSIDE the mask, which the finite-and-
+  # positive rule already discarded.
   - model: mt_sat
-    maps: [T1]
+    maps: [MTsat, T1]
     pairs:
       - [qmrlab, sct]
       - [qmrust, sct]
-      - [quit, sct]
     class: related-estimator
     reason: >-
-      SCT's T1 is the Helms two-point rational approximation embedded in its MTsat
-      calculation, not a VFA fit. Same map name, different estimator.
+      Same estimator, different clipping convention. SCT clips R1 below 0.01 s^-1 to give
+      T1 = 0, and zeroes |MTsat| above 1 p.u.; both thresholds are hardcoded with no CLI
+      flag. That accounts for 100% of the T1 disagreement and most of the MTsat
+      disagreement — 7.07% of the full mask, 0.11% of the interior mask. Excluding those
+      voxels the two agree to 2.8e-14. Where SCT writes 0, qMRLab publishes a large
+      negative T1, not an infinite one.
 
   # ---- inversion_recovery / T1: qMRLab / qmrust vs QUIT (spec §2.4, §7.3) ---------
   # The worked input-domain case. Red comes from input_domain, not from the class: this

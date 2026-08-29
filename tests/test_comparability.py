@@ -437,16 +437,22 @@ def test_qi_irtse_on_magnitude_data_is_red_even_when_the_numbers_agree():
     assert "abs()" in flag.reason
 
 
-def test_the_shipped_mt_sat_declaration_covers_t1_alone():
-    """MTsat and MTR are the same quantity computed the same way, so red there is a real
-    finding and must stay assignable."""
+def test_the_shipped_mt_sat_declaration_covers_the_two_clipped_maps():
+    """MTsat and T1 both carry SCT's hardcoded clips; MTR does not.
+
+    Measured 2026-08-28 against osf-data/mtsat: SCT clips R1 < 0.01 to T1 = 0 and zeroes
+    |MTsat| > 1, which is 100% of the T1 disagreement and most of the MTsat one. MTR comes
+    from a separate sct_compute_mtr call, agrees at ccc = 1.0 and frac_within = 1.0, and
+    must therefore stay red-assignable — a disagreement there would be a real finding.
+    """
     entries = load_comparability(ROOT)
     lookup = dict(a_target="qmrlab@v3.0.0", a_software="qmrlab",
                   b_target="sct@7.3", b_software="sct")
 
+    for clipped in ("T1", "MTsat"):
+        assert comparability_for(
+            entries, "mt_sat", clipped, **lookup
+        ).estimator_class == "related-estimator"
     assert comparability_for(
-        entries, "mt_sat", "T1", **lookup
-    ).estimator_class == "related-estimator"
-    assert comparability_for(
-        entries, "mt_sat", "MTsat", **lookup
+        entries, "mt_sat", "MTR", **lookup
     ).estimator_class == "same-estimator"
