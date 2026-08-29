@@ -22,17 +22,18 @@ def _write_target(root, target_id, *, models, lane="rust", **extra):
     path.write_text(yaml.safe_dump(doc))
 
 
-def _target(results, target_id, values, unit="s", model="vfa_t1"):
-    """Write one adapter's artifact tree: a T1 map plus its record."""
+def _target(results, target_id, values, unit="s", model="vfa_t1", *,
+            name="T1", software="x"):
+    """Write one adapter's artifact tree: one map plus its record."""
     d = results / target_id
     (d / "maps" / model).mkdir(parents=True, exist_ok=True)
     (d / "records").mkdir(parents=True, exist_ok=True)
-    write_nifti(d / "maps" / model / "T1.nii.gz", values, shape=(len(values),))
+    write_nifti(d / "maps" / model / f"{name}.nii.gz", values, shape=(len(values),))
     (d / "records" / f"{model}.json").write_text(json.dumps({
-        "target": target_id, "software": "x", "version": "1", "model": model,
+        "target": target_id, "software": software, "version": "1", "model": model,
         "status": "ok", "environment": {},
         "timing": {"repeats": 1, "fit_seconds": [1.0], "n_voxels_fitted": len(values)},
-        "maps": [{"name": "T1", "unit": unit, "path": f"maps/{model}/T1.nii.gz"}],
+        "maps": [{"name": name, "unit": unit, "path": f"maps/{model}/{name}.nii.gz"}],
     }))
 
 
@@ -405,3 +406,264 @@ def test_a_comparison_mask_of_the_wrong_size_aborts_the_run(tmp_path):
 
     with pytest.raises(ConfigError, match="comparison_mask.*3 voxels.*mask has 2"):
         analyze(results, root, reference="a@1")
+
+
+# --- comparability wiring (spec §5.5, §7, §7.3) --------------------------------------
+
+def _comparability(root, entries):
+    """Write the tmp root's comparability.yml.
+
+    Written per test rather than pointed at the repo's own file: the shipped
+    declarations are about qMRLab, QUIT and SCT, and a test that depended on them would
+    fail the day one of those entries is re-measured.
+    """
+    root = pathlib.Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "comparability.yml").write_text(yaml.safe_dump({"entries": entries}))
+
+
+def test_an_incomparable_pair_is_never_built_at_all(tmp_path):
+    """Spec §5.5: not a row with a caveat. A number here would be read as an answer to
+    a question the declaration says these two are not both answering."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0], software="alpha")
+    _target(results, "b@1", [1.0, 2.0], software="beta")
+    _mask(root, 2)
+    _local_catalog(root, maps=[{"name": "T1", "unit": "s"}])
+    _comparability(root, [{
+        "model": "vfa_t1", "maps": ["T1"], "pairs": [["alpha", "beta"]],
+        "class": "incomparable",
+        "reason": "different physical quantity under the same name",
+    }])
+
+    doc = analyze(results, root, reference="a@1")
+
+    assert doc["comparisons"]["vfa_t1"]["T1"] == []
+    # The records themselves are untouched: an incomparable PAIR is not a failed target.
+    assert [r["status"] for r in doc["records"]] == ["ok", "ok"]
+
+
+def test_a_related_estimator_pair_is_amber_however_good_the_numbers_are(tmp_path):
+    """Two bit-identical maps, and the flag is still amber: red is only assignable
+    inside same-estimator, and green would claim an agreement the declaration says
+    cannot be read as one (spec §7)."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0], software="alpha")
+    _target(results, "b@1", [1.0, 2.0], software="beta")
+    _mask(root, 2)
+    _local_catalog(root, maps=[{"name": "T1", "unit": "s"}])
+    _comparability(root, [{
+        "model": "vfa_t1", "maps": ["T1"], "pairs": [["alpha", "beta"]],
+        "class": "related-estimator",
+        "reason": "beta fits three parameters where alpha fits two",
+    }])
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert pair["max_abs_delta"] == 0.0
+    assert pair["estimator_class"] == "related-estimator"
+    assert pair["flag"] == "amber"
+    # The declared cause travels onto the row, because the site renders it as visible
+    # text beside the colour rather than as a tooltip (spec §7.3).
+    assert pair["flag_reason"] == "beta fits three parameters where alpha fits two"
+
+
+def test_the_software_a_declaration_names_is_the_one_target_yml_declares(tmp_path):
+    """comparability.yml names softwares, analyze compares TARGETS, and target.yml owns
+    the mapping between them. Resolving it from the id's text before '@' would be a
+    second source of truth for a fact the catalog already states."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "one@1", [1.0, 2.0])
+    _target(results, "two@1", [1.0, 2.0])
+    _mask(root, 2)
+    _local_catalog(root, maps=[{"name": "T1", "unit": "s"}])
+    _write_target(root, "one@1", models=["vfa_t1"], software="quit")
+    _write_target(root, "two@1", models=["vfa_t1"], software="qmrlab")
+    _comparability(root, [{
+        "model": "vfa_t1", "maps": ["T1"], "pairs": [["quit", "qmrlab"]],
+        "class": "related-estimator", "reason": "qi irtse fits two parameters",
+    }])
+
+    pair = analyze(results, root, reference="one@1")["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert pair["flag"] == "amber"
+    assert pair["flag_reason"] == "qi irtse fits two parameters"
+
+
+def test_an_undeclared_pair_is_same_estimator_and_the_numbers_decide(tmp_path):
+    """The default is the assignable one. Making the safe-looking class the default
+    would silence red everywhere by saying nothing (spec §5.5)."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0, 3.0])
+    _target(results, "b@1", [1.5, 3.0, 4.5])
+    _mask(root, 3)
+    _local_catalog(root, maps=[{"name": "T1", "unit": "s"}])
+    _comparability(root, [{
+        "model": "vfa_t1", "maps": ["T1"], "pairs": [["other", "software"]],
+        "class": "incomparable", "reason": "about two entirely different targets",
+    }])
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert pair["estimator_class"] == "same-estimator"
+    assert pair["flag"] == "red"
+    assert "relative median difference" in pair["flag_reason"]
+
+
+def test_no_comparability_file_leaves_every_pair_scored_as_it_always_was(tmp_path):
+    """An absent declaration is an empty one, not an error: the fourteen qMRLab-versus-
+    qMRLab pairs predate the file and must keep being built and scored."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0, 3.0])
+    _target(results, "b@1", [1.0, 2.0, 3.0])
+    _mask(root, 3)
+    _local_catalog(root, maps=[{"name": "T1", "unit": "s"}])
+
+    doc = analyze(results, root, reference="a@1")
+    pair = doc["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert not (root / "comparability.yml").exists()
+    assert pair["n"] == 3
+    assert pair["estimator_class"] == "same-estimator"
+    assert pair["flag"] == "green"
+
+
+# --- scale-free maps (spec §7) -------------------------------------------------------
+
+def test_an_au_map_is_compared_scale_free_because_its_amplitude_is_arbitrary(tmp_path):
+    """vfa_t1/M0 and mono_t2/M0. The ratio of two arbitrary scales is arbitrary, so it
+    is reported beside the row and explicitly not treated as a disagreement."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0, 3.0], unit="au", name="M0")
+    _target(results, "b@1", [10.0, 20.0, 30.0], unit="au", name="M0")
+    _mask(root, 3)
+    _local_catalog(root, maps=[{"name": "M0", "unit": "au"}])
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["M0"][0]
+
+    assert pair["scale_free"] is True
+    assert pair["scale_ratio_not_a_disagreement"] == 0.1
+    assert pair["rel_median_diff"] == 0.0
+    assert pair["flag"] == "green"
+
+
+def test_a_b1_map_is_never_scale_free_even_though_its_records_say_au(tmp_path):
+    """The trap spec §7 names outright. Every adapter reports B1map in 'au' while
+    models/b1_*.yml declares 'fraction' (spec §5.3), so keying scale_free on the
+    RECORD's unit would median-normalise a genuine ratio in which 1.0 means the nominal
+    flip angle was reached — deleting a 10% transmit-calibration difference instead of
+    measuring it."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    # b@1 reports the same field 10% higher — a calibration difference, not a free scale.
+    _target(results, "a@1", [1.0, 1.20, 1.40], unit="au", name="B1map")
+    _target(results, "b@1", [1.1, 1.32, 1.54], unit="au", name="B1map")
+    _mask(root, 3)
+    _local_catalog(root, maps=[{"name": "B1map", "unit": "fraction"}])
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["B1map"][0]
+
+    assert pair["scale_free"] is False
+    assert pair["scale_ratio_not_a_disagreement"] is None
+    # Normalised, this pair is rel_median_diff 0.0 and CCC 1.0 — green, the finding
+    # deleted. Unnormalised it is the 9.1% offset it is, and CCC 0.8 flags it red.
+    # 6 digits, not exact: the fixtures are float32 NIfTIs like a real adapter's.
+    assert round(pair["rel_median_diff"], 6) == round(-0.1 / 1.1, 6)
+    assert round(pair["ccc"], 6) == 0.8
+    assert pair["flag"] == "red"
+
+
+# --- MapSpec.comparison_range (spec §7.2) --------------------------------------------
+
+_RANGED_T1 = [{"name": "T1", "unit": "s", "comparison_range": [0, 10]}]
+
+
+def test_a_comparison_range_narrows_the_pair_and_nothing_else(tmp_path):
+    """The same guarantee comparison_mask carries: statistics and the hash are computed
+    over the model's published mask on the produced values, whatever the range says."""
+    from harness.measure import voxel_sha256
+
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0, 1e6])
+    _target(results, "b@1", [1.0, 2.0, 1e6])
+    _mask(root, 3)
+    _local_catalog(root, maps=_RANGED_T1)
+
+    doc = analyze(results, root, reference="a@1")
+    pair = doc["comparisons"]["vfa_t1"]["T1"][0]
+    m = doc["records"][0]["maps"][0]
+
+    assert pair["n"] == 2
+    assert pair["n_out_of_range"] == 1
+    assert pair["comparison_range"] == [0, 10]
+    assert m["stats"]["n"] == 3
+    assert m["stats"]["max"] == 1e6
+    assert m["voxel_sha256"] == voxel_sha256(np.array([1.0, 2.0, 1e6]))
+
+
+def test_one_side_out_of_range_removes_the_voxel_from_both(tmp_path):
+    """A range is a claim about which values are physical, so a voxel only enters a
+    comparison if BOTH maps put it inside: 34,683 s is not comparable to 0.9 s whichever
+    implementation produced it."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0, 0.9])
+    _target(results, "b@1", [1.0, 2.0, 34683.0])
+    _mask(root, 3)
+    _local_catalog(root, maps=_RANGED_T1)
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert pair["n"] == 2
+    assert pair["n_out_of_range"] == 1
+    assert pair["max_abs_delta"] == 0.0
+
+
+def test_the_exclusion_count_counts_only_what_the_range_excluded(tmp_path):
+    """Not "every voxel the comparison did not use". A non-finite voxel was never in a
+    comparison to begin with — compare_maps has always dropped it — and counting it
+    here would report an exclusion the range did not make."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, float("nan"), 1e6, 2.0])
+    _target(results, "b@1", [1.0, 5.0, 3.0, 2.0])
+    _mask(root, 4)
+    _local_catalog(root, maps=_RANGED_T1)
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert pair["n"] == 2
+    assert pair["n_out_of_range"] == 1
+
+
+def test_a_map_with_no_range_reports_the_absence_rather_than_omitting_it(tmp_path):
+    """Both keys on every row whether declared or not: rows of two different shapes
+    move the failure into whichever renderer reads the short one."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 1e6])
+    _target(results, "b@1", [1.0, 1e6])
+    _mask(root, 2)
+    _local_catalog(root, maps=[{"name": "T1", "unit": "s"}])
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert pair["comparison_range"] is None
+    assert pair["n_out_of_range"] == 0
+    assert pair["n"] == 2
+
+
+def test_the_range_acts_inside_the_comparison_mask_not_instead_of_it(tmp_path):
+    """Two independent narrowings of one selection. Applying either alone would score
+    a different voxel set than the one both declarations describe."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0, 1e6, 4.0])
+    _target(results, "b@1", [1.0, 2.0, 1e6, 4.0])
+    _write_mask(root, "vfa_t1", [1, 1, 1, 1])
+    _write_mask(root, "vfa_t1_interior", [1, 1, 1, 0])
+    _local_catalog(
+        root, maps=_RANGED_T1, comparison_mask="masks/vfa_t1_interior.nii.gz",
+    )
+
+    doc = analyze(results, root, reference="a@1")
+    pair = doc["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert pair["n"] == 2  # 4 voxels, minus the one the mask drops and the one the range does
+    assert pair["n_out_of_range"] == 1
+    assert doc["records"][0]["maps"][0]["stats"]["n"] == 4

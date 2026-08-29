@@ -14,6 +14,7 @@ import pathlib
 
 import numpy as np
 
+from harness.comparability import comparability_for, flag_for, load_comparability
 from harness.compare import compare_maps
 from harness.config import (
     RECIPROCAL_UNIT,
@@ -30,6 +31,33 @@ from harness.units import scale_between
 
 def _load_mask(root: pathlib.Path, path: str) -> np.ndarray:
     return read_nifti(pathlib.Path(root) / path).values
+
+
+def _comparison_selection(
+    a: np.ndarray, b: np.ndarray, mask: np.ndarray, spec: MapSpec
+) -> tuple[np.ndarray, int]:
+    """The voxels one pair is compared over, plus how many a declared range removed.
+
+    The range is a claim about physics, so a voxel enters only if BOTH sides lie in it:
+    one implementation's 7.75e15 p.u. MTsat is not comparable to the other's 2.3 whichever
+    side produced it (spec §7.2's argument for comparison_mask, at a resolution a mask on
+    the INPUT intensities cannot reach).
+
+    The finite-in-both rule is applied here as well as inside compare_maps, which is not
+    redundant: it is what makes the returned count mean "voxels that would have been
+    compared and were not". Taken against the bare mask it would also count every
+    background NaN — voxels the range did not exclude and that were never in a comparison
+    — and an inflated exclusion count is exactly the thing this count exists to prevent
+    someone inventing. Reported for masked_stats' n_nonfinite reason: an exclusion nobody
+    can see is indistinguishable from a mask that never had those voxels.
+    """
+    selected = np.asarray(mask).astype(bool)
+    if spec.comparison_range is None:
+        return selected, 0
+    lo, hi = spec.comparison_range
+    comparable = selected & np.isfinite(a) & np.isfinite(b)
+    in_range = comparable & (a >= lo) & (a <= hi) & (b >= lo) & (b <= hi)
+    return in_range, int((comparable & ~in_range).sum())
 
 
 def _canonical_values(values: np.ndarray, produced: str, spec: MapSpec) -> np.ndarray:
@@ -193,6 +221,21 @@ def analyze(
             bucket = equivalence[record["model"]].setdefault(m["name"], {})
             bucket.setdefault(m["voxel_sha256"], []).append(record["target"])
 
+    # Read once, and from `root` rather than the results tree: comparability is a
+    # property of the implementations, not of any one run's artifacts. An absent file is
+    # an empty declaration (not an error), which leaves every pair on the undeclared
+    # same-estimator default — exactly what the fourteen qMRLab-versus-qMRLab pairs have
+    # always been scored as.
+    declarations = load_comparability(root)
+    # target -> the software it belongs to. Seeded from the records, because a results
+    # tree can hold a target the catalog does not declare and every record carries a
+    # non-empty `software` by schema; then overridden by targets/*/target.yml, which OWNS
+    # that fact (harness/comparability.py resolves a declared member against the target's
+    # declared software rather than the text before its '@', so that the two cannot become
+    # two sources of truth).
+    software = {r["target"]: r["software"] for r in records if r["software"]}
+    software.update({tid: spec.software for tid, spec in targets.items()})
+
     comparisons: dict = collections.defaultdict(dict)
     for model_id, by_map in canonical.items():
         # The comparison mask is the ONLY place a stricter selection is allowed to act
@@ -211,12 +254,59 @@ def analyze(
                 f"model mask has {masks[model_id].size}"
             )
         for map_name, by_target in by_map.items():
+            # Cannot miss: `canonical` is only ever filled with a map name that was
+            # matched against this model's catalog entry on the way in.
+            spec = next(m for m in models[model_id].maps if m.name == map_name)
+            # Keyed on the CANONICAL unit, never on the record's produced unit, and that
+            # is load-bearing rather than incidental: every adapter reports B1map as 'au'
+            # while models/b1_*.yml declares 'fraction' (spec §5.3), so keying on the
+            # produced unit would median-normalise a genuine ratio in which 1.0 means the
+            # nominal flip angle was reached — deleting a 10% B1 calibration offset
+            # instead of measuring it, which spec §7 forbids by name.
+            scale_free = spec.unit == "au"
             pairs = []
             for a, b in itertools.combinations(sorted(by_target), 2):
-                pairs.append({
+                entry = comparability_for(
+                    declarations, model_id, map_name,
+                    a_target=a, a_software=software[a],
+                    b_target=b, b_software=software[b],
+                )
+                if not entry.comparable:
+                    # Not a row with a caveat: the declaration says these two do not
+                    # answer the same question, so any number here would be read as an
+                    # answer to it. site.py already renders an absent pair as "no
+                    # comparable voxels" (spec §5.5).
+                    continue
+                selection, n_out_of_range = _comparison_selection(
+                    by_target[a], by_target[b], mask, spec
+                )
+                row = {
                     "a": a, "b": b,
-                    **compare_maps(by_target[a], by_target[b], mask),
-                })
+                    **compare_maps(
+                        by_target[a], by_target[b], selection, scale_free=scale_free
+                    ),
+                    # Both keys on every row, declared or not, for _unmeasurable's
+                    # reason: rows of two different shapes move the failure into
+                    # whichever renderer reads the short one.
+                    "comparison_range": (
+                        None if spec.comparison_range is None
+                        else list(spec.comparison_range)
+                    ),
+                    "n_out_of_range": n_out_of_range,
+                }
+                # The colour is never computed from the numbers alone. Red is only
+                # assignable inside same-estimator, and `estimator_class` travels with the
+                # row so the site can say that rather than leaving a permanently-amber
+                # cell looking like a fit that never quite passed (spec §7, §7.3).
+                flag = flag_for(
+                    entry,
+                    rel_median_diff=row["rel_median_diff"],
+                    ccc=row["ccc"],
+                )
+                row["estimator_class"] = entry.estimator_class
+                row["flag"] = flag.colour
+                row["flag_reason"] = flag.reason
+                pairs.append(row)
             comparisons[model_id][map_name] = pairs
 
     return {

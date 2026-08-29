@@ -40,6 +40,19 @@ class MapSpec:
     # None means "the produced value already IS this quantity", which is every map in
     # the catalog today. Defaulted rather than required so no models/*.yml has to move.
     transform: str | None = None
+    # [lo, hi] in this map's canonical unit, bounding which voxels may enter a PAIRWISE
+    # COMPARISON -- never the statistics, never the hash, never masked_stats (spec §7.2's
+    # rule for comparison_mask, one level finer). It exists because a mask cannot express
+    # it: masks/mt_sat_interior.nii.gz is an Otsu threshold on PDw INTENSITY, and no
+    # threshold on the input can exclude a voxel whose FITTED value exploded. 34 interior
+    # voxels hold |MTsat| > 1000 (max 7.75e15) and 10 hold |T1| > 1000 (max 34,683 s).
+    # Against a software that clips them, those 44 voxels alone take the CCC of two
+    # otherwise-agreeing maps to zero -- 0.0012 on T1, order 1e-16 on MTsat -- while the
+    # relative median difference stays exactly 0.0: they destroy the second criterion
+    # without moving the first one that would have shown why. A range is a claim about
+    # physics -- 10 s is not a T1 -- so it is declared per map with its reason, and never
+    # inferred from the data it will then be used to judge.
+    comparison_range: tuple[float, float] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -87,6 +100,41 @@ def _optional_path(doc: dict, key: str, where: str) -> str | None:
     return value
 
 
+def _comparison_range(doc: dict, where: str, name: str) -> tuple[float, float] | None:
+    """Validate an optional [lo, hi] as strictly as a unit, and for the same reason.
+
+    A range silently ignored or read backwards would not fail: it would publish a red
+    flag computed over a voxel selection nobody declared, which is indistinguishable on
+    the site from the fit disagreeing. So every way of getting it wrong raises, naming
+    the file and the map.
+    """
+    if "comparison_range" not in doc:
+        return None
+    value = doc["comparison_range"]
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ConfigError(
+            f"{where} ({name!r}): comparison_range must be a two-item [lo, hi], "
+            f"got {value!r}"
+        )
+    for bound in value:
+        # bool is an int subclass, so `comparison_range: [false, 10]` would otherwise
+        # pass as [0, 10] -- a YAML typo that reads as a deliberate physical bound.
+        if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+            raise ConfigError(
+                f"{where} ({name!r}): comparison_range bounds must be numbers, "
+                f"got {bound!r}"
+            )
+    lo, hi = float(value[0]), float(value[1])
+    # Spelled as `not lo < hi` rather than `lo >= hi` so a NaN bound is refused too:
+    # every comparison with NaN is False, so a NaN range would silently exclude every
+    # voxel and report an empty comparison as a measured one.
+    if not lo < hi:
+        raise ConfigError(
+            f"{where} ({name!r}): comparison_range must have lo < hi, got [{lo}, {hi}]"
+        )
+    return (lo, hi)
+
+
 def _map_spec(doc: dict, where: str) -> MapSpec:
     name = _require(doc, "name", where)
     unit = _require(doc, "unit", where)
@@ -107,7 +155,12 @@ def _map_spec(doc: dict, where: str) -> MapSpec:
                 f"unit {unit!r}; only {sorted(RECIPROCAL_UNIT)} have a reciprocal the "
                 "unit table can name"
             )
-    return MapSpec(name=name, unit=unit, transform=transform)
+    return MapSpec(
+        name=name,
+        unit=unit,
+        transform=transform,
+        comparison_range=_comparison_range(doc, where, name),
+    )
 
 
 def load_models(root: pathlib.Path) -> dict[str, ModelSpec]:

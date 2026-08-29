@@ -1,9 +1,9 @@
-"""The three schema extensions the cross-software design adds (§4.1, §5.2, §7.2).
+"""The four schema extensions the cross-software design adds (§4.1, §5.2, §7.2).
 
 Kept apart from test_config_models.py and test_config_targets.py, which assert what the
-committed catalog says. All three fields are optional, so almost everything here is
-written against a synthetic catalog: asserting that no shipped file declares one would
-only hold until the first one does.
+committed catalog says. Every field is optional, so almost everything here is written
+against a synthetic catalog: what the shipped files happen to declare belongs in the
+catalog tests, which move when the catalog does.
 """
 import pathlib
 
@@ -109,6 +109,77 @@ def test_an_empty_comparison_mask_is_a_config_error_not_a_silent_fallback(tmp_pa
             tmp_path, id="broken", maps=[{"name": "T1", "unit": "s"}],
             comparison_mask="",
         )
+
+
+# --- MapSpec.comparison_range (spec §7.2) --------------------------------------------
+
+def test_a_map_that_declares_no_comparison_range_gets_none(tmp_path):
+    """Additive like `transform`: a map that says nothing about it is compared over
+    exactly the voxels it was compared over before the field existed."""
+    models = _model(tmp_path, maps=[{"name": "T1", "unit": "s"}])
+
+    assert models["m"].maps[0].comparison_range is None
+
+
+def test_a_declared_range_is_carried_onto_the_map_as_floats(tmp_path):
+    """Floats, not the ints the YAML says: the bound is compared against float64 voxel
+    values, and a mixed-type tuple would make `[0, 10]` and `[0.0, 10.0]` two different
+    declarations of one range."""
+    models = _model(
+        tmp_path, maps=[{"name": "T1", "unit": "s", "comparison_range": [0, 10]}]
+    )
+
+    assert models["m"].maps[0].comparison_range == (0.0, 10.0)
+
+
+def test_a_range_that_is_not_two_bounds_is_a_config_error(tmp_path):
+    with pytest.raises(ConfigError, match=r"broken\.yml.*'T1'.*comparison_range.*two"):
+        _model(
+            tmp_path, id="broken",
+            maps=[{"name": "T1", "unit": "s", "comparison_range": [0, 5, 10]}],
+        )
+
+
+def test_a_range_declared_backwards_is_a_config_error(tmp_path):
+    """lo >= hi selects nothing, and an empty comparison publishes as "no comparable
+    voxels" — a typo that reads on the site as two maps having nothing in common."""
+    with pytest.raises(ConfigError, match=r"broken\.yml.*'T1'.*lo < hi"):
+        _model(
+            tmp_path, id="broken",
+            maps=[{"name": "T1", "unit": "s", "comparison_range": [10, 0]}],
+        )
+
+
+def test_a_non_numeric_bound_is_a_config_error_naming_the_file_and_the_map(tmp_path):
+    with pytest.raises(ConfigError, match=r"broken\.yml.*'T1'.*numbers.*'ten'"):
+        _model(
+            tmp_path, id="broken",
+            maps=[{"name": "T1", "unit": "s", "comparison_range": [0, "ten"]}],
+        )
+
+
+def test_a_boolean_bound_is_refused_rather_than_read_as_zero(tmp_path):
+    """bool is an int subclass, so `[false, 10]` would otherwise pass as [0, 10] — a
+    YAML typo that reads as a deliberate physical bound and silently is one."""
+    with pytest.raises(ConfigError, match=r"broken\.yml.*'T1'.*numbers"):
+        _model(
+            tmp_path, id="broken",
+            maps=[{"name": "T1", "unit": "s", "comparison_range": [False, 10]}],
+        )
+
+
+def test_a_nan_bound_is_refused(tmp_path):
+    """Every comparison with NaN is False, so a NaN bound excludes every voxel while
+    looking like a declared range. It is refused by the same `lo < hi` check, which is
+    written in that direction for exactly this reason."""
+    (tmp_path / "models").mkdir(exist_ok=True)
+    (tmp_path / "models" / "broken.yml").write_text(
+        "id: broken\ndataset: ir\nmask: masks/m.nii.gz\n"
+        "maps: [{name: T1, unit: s, comparison_range: [.nan, 10]}]\n"
+    )
+
+    with pytest.raises(ConfigError, match=r"broken\.yml.*'T1'.*lo < hi"):
+        load_models(tmp_path)
 
 
 # --- the `native` lane (spec §4.1) ---------------------------------------------------

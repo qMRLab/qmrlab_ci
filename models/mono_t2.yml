@@ -2,5 +2,9 @@ id: mono_t2
 dataset: mono_t2
 mask: masks/mono_t2.nii.gz
 maps:
-  - {name: T2, unit: s}
+  # T2 in tissue is tens of milliseconds and CSF's is ~2 s at 3T, so 10 s excludes only a
+  # fit that ran away up the exponential's flat tail. Deliberately not tightened to the
+  # tissue range: a range chosen to make the agreement look good would be worse than none.
+  - {name: T2, unit: s, comparison_range: [0, 10]}
+  # No range on M0, for models/vfa_t1.yml's reason: 'au' is a free scale.
   - {name: M0, unit: au}

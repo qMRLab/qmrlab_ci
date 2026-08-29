@@ -25,10 +25,22 @@ mask: masks/qmt_spgr.nii.gz
 # The same six fitted parameters and units as models/qmt_spgr.yml -- the sub-model
 # changes how they are estimated, not what they are. kf and resnorm stay excluded for
 # that file's reason: derived/diagnostic, not reliably present in every era.
+# The ranges are qmt_spgr.yml's, and have to be identical to them: the sub-model
+# changes how these six parameters are estimated, never which of their values are
+# physical. A range that differed between the two streams would make the comparison
+# selection itself a variable, and a Ramani-versus-SledPikeRP difference could then be
+# a difference in which voxels were compared.
 maps:
-  - {name: F,   unit: fraction}
-  - {name: kr,  unit: "s^-1"}
-  - {name: R1f, unit: "s^-1"}
-  - {name: R1r, unit: "s^-1"}
-  - {name: T2f, unit: s}
-  - {name: T2r, unit: s}
+  # Bound-pool fraction: a fraction of a proton pool, so [0, 1] is its own definition.
+  # (It fits at a median 0.159 here; the bound is the definition, not the distribution.)
+  - {name: F,   unit: fraction, comparison_range: [0, 1]}
+  # Exchange rate from the bound to the free pool.
+  - {name: kr,  unit: "s^-1",   comparison_range: [0, 200]}
+  # R1 = 1/T1, so 20 s^-1 is a 50 ms T1 -- shorter than any tissue -- and a negative
+  # relaxation rate is a diverged fit rather than a fast one.
+  - {name: R1f, unit: "s^-1",   comparison_range: [0, 20]}
+  - {name: R1r, unit: "s^-1",   comparison_range: [0, 20]}
+  # The free pool's T2 is tens of milliseconds; the bound pool's is on the order of
+  # microseconds, which is why its bound is three orders smaller and not a typo.
+  - {name: T2f, unit: s,        comparison_range: [0, 1]}
+  - {name: T2r, unit: s,        comparison_range: [0, 0.001]}

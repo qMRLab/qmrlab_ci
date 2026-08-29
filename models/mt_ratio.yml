@@ -2,4 +2,11 @@ id: mt_ratio
 dataset: mtr
 mask: masks/mt_ratio.nii.gz
 maps:
-  - {name: MTR, unit: percent}
+  # MTR = 100*(MToff - MTon)/MToff, bounded by ±100 for non-negative signals by its own
+  # definition. A voxel outside it had MToff down at the noise floor and is measuring that
+  # division, not a saturation. SCT clips at exactly this bound and qMRLab does not, which
+  # is why it is declared HERE: targets/sct@7.3/run.sh passes -thr 1000000 to disable the
+  # clip so every implementation reports what it actually fitted, and the catalog then
+  # applies one selection to all of them. It costs 2 in-mask voxels on this archive -- the
+  # same 2 whose clipping run.sh measured at pearson_r 0.999542 against 0.9999999999999897.
+  - {name: MTR, unit: percent, comparison_range: [-100, 100]}

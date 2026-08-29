@@ -77,3 +77,70 @@ def test_model_missing_a_required_field_is_a_config_error(tmp_path):
 
     with pytest.raises(ConfigError, match="mask"):
         load_models(tmp_path)
+
+
+def test_no_scale_free_map_declares_a_comparison_range():
+    """A map whose unit is 'au' has a free amplitude, so its comparison normalises each
+    side by its own masked median (spec §7). A bound on an arbitrary scale would bound
+    the arbitrariness, not the physics, and would exclude voxels for having been written
+    by a software that scales M0 differently — which is the one thing the normalisation
+    exists to stop being a finding."""
+    for model in load_models(ROOT).values():
+        for m in model.maps:
+            if m.unit == "au":
+                assert m.comparison_range is None, f"{model.id}/{m.name}"
+
+
+def test_every_map_that_can_carry_a_range_declares_one():
+    """The catalog is complete, not partially migrated. A map with no declared range is
+    compared over every voxel of its mask including the diverged ones, so a model added
+    later without one would quietly reintroduce the failure of spec §7.2 — CCC destroyed
+    by a few voxels while the median difference reads 0.0. If some future map genuinely
+    has no physical bound, this test is where that decision gets recorded."""
+    undeclared = [
+        f"{model.id}/{m.name}"
+        for model in load_models(ROOT).values()
+        for m in model.maps
+        if m.unit != "au" and m.comparison_range is None
+    ]
+
+    assert undeclared == []
+
+
+def test_every_declared_range_is_ordered_and_contains_a_physical_value():
+    """A range that excluded its own model's typical value would be a selection nobody
+    could read as physical. Anchored on one plausible in-vivo value per unit rather
+    than on measured data, so this checks the DECLARATION and not whichever run happens
+    to be sitting in results/."""
+    plausible = {
+        "s": 0.9,          # a T1/T2 in seconds, well inside every declared bound
+        "s^-1": 1.1,       # its rate
+        "percent": 2.5,    # MTsat p.u. / MTR percent
+        "fraction": 0.16,  # bound-pool fraction, B1 near nominal
+    }
+    for model in load_models(ROOT).values():
+        for m in model.maps:
+            if m.comparison_range is None:
+                continue
+            lo, hi = m.comparison_range
+            assert lo < hi, f"{model.id}/{m.name}"
+            # T2r's microseconds are the one map whose physical value is nowhere near
+            # any of the above, and its bound is three orders smaller for that reason.
+            value = 1.2e-5 if m.name == "T2r" else plausible[m.unit]
+            assert lo <= value <= hi, f"{model.id}/{m.name} excludes {value}"
+
+
+def test_only_the_derived_models_declare_a_comparison_mask():
+    """Spec §7.2, and it must agree with scripts/derive_masks.py's INTERIOR_FROM: an
+    interior mask exists only where that script writes one. Five models ship the
+    archive's own mask, which is already anatomical, and b1_dam is derived but
+    deliberately has none — a single 64x64 slice the phantom fills has no background to
+    cut, and Otsu on SFalpha would keep an annulus. Declaring a comparison_mask that no
+    run produces would fail the whole analysis at the comparison pass, i.e. after every
+    fit in the matrix had already run."""
+    declared = {
+        model.id for model in load_models(ROOT).values()
+        if model.comparison_mask is not None
+    }
+
+    assert declared == {"mt_sat", "b1_afi"}

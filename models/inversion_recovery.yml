@@ -2,4 +2,6 @@ id: inversion_recovery
 dataset: ir
 mask: masks/inversion_recovery.nii.gz
 maps:
-  - {name: T1, unit: s}
+  # As models/vfa_t1.yml: above 10 s is no tissue at 3T, and below 0 is a fit that
+  # diverged rather than a fast relaxation.
+  - {name: T1, unit: s, comparison_range: [0, 10]}

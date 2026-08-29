@@ -1,5 +1,15 @@
 id: b1_afi
 dataset: b1_afi
 mask: masks/b1_afi.nii.gz
+# Spec §7.2, as models/mt_sat.yml: Otsu on AFIData1 (the two AFI volumes are one
+# acquisition at two TRs, so either shows the same anatomy), retaining 103,286 of the
+# stats mask's 300,140 voxels. It scores the cross-software flag only -- `mask` above
+# still produces every published statistic and every hash. It matters more here than
+# anywhere: the stats mask keeps 103,484 voxels where the fitted B1 is exactly 0, and
+# `frac_within`'s tolerance band collapses to exact equality wherever the reference voxel
+# is 0 (spec §7.1). The interior mask drops 102,079 of them, leaving 1,405.
+comparison_mask: masks/b1_afi_interior.nii.gz
 maps:
-  - {name: B1map, unit: fraction}
+  # As models/b1_dam.yml: 1.0 is nominal, and outside [0, 2] the AFI ratio r has left the
+  # domain where arccos((r*n - 1)/(n - r)) is a flip angle at all.
+  - {name: B1map, unit: fraction, comparison_range: [0, 2]}

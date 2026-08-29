@@ -4,10 +4,23 @@ mask: masks/qmt_spgr.nii.gz
 # The six fitted parameters (qmt_spgr.m's xnames). kf and resnorm are deliberately
 # excluded: they are derived/diagnostic and not reliably present in every era, so
 # including them would turn an era difference into a spurious failure.
+# Every bound is looser than any implementation's own fit bounds -- qmrust's are F <= 0.5,
+# kr <= 100 s^-1, R1 <= 5 s^-1, T2f <= 0.5 s, T2r <= 5e-5 s -- so a voxel these ranges
+# exclude is one no fit in the comparison could have intended to produce: a parameter left
+# free, a pinned bound read back, or a diverged least-squares. Tightening them to the fit
+# bounds would instead exclude the very voxels where two implementations bound the problem
+# differently, which is the disagreement this benchmark exists to show.
 maps:
-  - {name: F,   unit: fraction}
-  - {name: kr,  unit: "s^-1"}
-  - {name: R1f, unit: "s^-1"}
-  - {name: R1r, unit: "s^-1"}
-  - {name: T2f, unit: s}
-  - {name: T2r, unit: s}
+  # Bound-pool fraction: a fraction of a proton pool, so [0, 1] is its own definition.
+  # (It fits at a median 0.159 here; the bound is the definition, not the distribution.)
+  - {name: F,   unit: fraction, comparison_range: [0, 1]}
+  # Exchange rate from the bound to the free pool.
+  - {name: kr,  unit: "s^-1",   comparison_range: [0, 200]}
+  # R1 = 1/T1, so 20 s^-1 is a 50 ms T1 -- shorter than any tissue -- and a negative
+  # relaxation rate is a diverged fit rather than a fast one.
+  - {name: R1f, unit: "s^-1",   comparison_range: [0, 20]}
+  - {name: R1r, unit: "s^-1",   comparison_range: [0, 20]}
+  # The free pool's T2 is tens of milliseconds; the bound pool's is on the order of
+  # microseconds, which is why its bound is three orders smaller and not a typo.
+  - {name: T2f, unit: s,        comparison_range: [0, 1]}
+  - {name: T2r, unit: s,        comparison_range: [0, 0.001]}

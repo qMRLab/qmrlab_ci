@@ -2,5 +2,12 @@ id: vfa_t1
 dataset: vfa_t1
 mask: masks/vfa_t1.nii.gz
 maps:
-  - {name: T1, unit: s}
+  # 10 s is far above any tissue T1 at 3T (CSF, the longest, is ~4.3 s) and 0 excludes the
+  # negative T1 a linearised VFA fit produces where the two flip angles cross. Loose on
+  # purpose: the range must exclude divergence only, never a value some implementation
+  # legitimately fitted.
+  - {name: T1, unit: s, comparison_range: [0, 10]}
+  # No range on M0. Its unit is 'au', so its amplitude is a free scale and any bound would
+  # be a bound on the arbitrary scale rather than on the physics -- the comparison
+  # normalises it by its own masked median instead (spec §7).
   - {name: M0, unit: au}

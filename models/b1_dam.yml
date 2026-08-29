@@ -2,4 +2,9 @@ id: b1_dam
 dataset: b1_dam
 mask: masks/b1_dam.nii.gz
 maps:
-  - {name: B1map, unit: fraction}
+  # B1map is the ratio of achieved to nominal flip angle, so 1.0 IS the nominal field and
+  # the range is written around it. A transmit field twice nominal, or negative, is not a
+  # B1 measurement but the double-angle arccos taken outside its domain. This is also the
+  # map that must never be normalised by its own median (spec §7): the offset a B1 map
+  # reports is the finding, so the bound is the only selection it may get.
+  - {name: B1map, unit: fraction, comparison_range: [0, 2]}

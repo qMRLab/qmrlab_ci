@@ -1,7 +1,34 @@
 id: mt_sat
 dataset: mtsat
 mask: masks/mt_sat.nii.gz
+# Spec §7.2. Otsu on PDw, retaining 588,562 of the stats mask's 1,497,725 voxels. Scores
+# the cross-software flag ONLY -- `mask` above still produces every published statistic
+# and every hash, so declaring this moved no number already on the site.
+comparison_mask: masks/mt_sat_interior.nii.gz
+# The ranges below are the part no mask can do. Otsu thresholds PDw INTENSITY, so it keeps
+# a voxel whose input was bright and whose FIT then diverged: 34 voxels inside this very
+# mask hold |MTsat| > 1000 (max 7.75e15) and 10 hold |T1| > 1000 (max 34,683 s). Against a
+# software that clips them, those 44 voxels alone take the CCC to zero -- 0.0012 on T1 and
+# order 1e-16 on MTsat -- while the relative median difference stays exactly 0.0. They
+# destroy the second criterion without moving the first one that would have shown why, and
+# the site reads the result as two implementations disagreeing about the fit.
 maps:
-  - {name: MTsat, unit: percent}
-  - {name: T1,    unit: s}
-  - {name: MTR,   unit: percent}
+  # MT saturation is the fraction of longitudinal magnetization one pulse removes, so it
+  # is bounded by 100 p.u. by its own definition. Inside the comparison mask this fit runs
+  # p05 = 0.14 to p95 = 6.64 p.u.; ±10 keeps every fitted tissue value and cuts only the
+  # 2.6% tail that reaches 4.5e16.
+  - {name: MTsat, unit: percent, comparison_range: [-10, 10]}
+  # No tissue T1 at 3T approaches 10 s -- CSF, the longest, is ~4.3 s. A negative T1 is
+  # not a slow relaxation either but an R1 the fit drove below zero: 102,752 in-mask
+  # voxels here hold R1 < 0, reaching T1 = -10,782 s.
+  # transform: reciprocal. QUIT's `qi mtsat` reports this map as MTSat_R1 in s^-1, not T1
+  # in s, and units.py refuses that pair on purpose -- a reciprocal is not a scale factor.
+  # The transform is a FALLBACK, applied only to a record whose produced unit the linear
+  # table cannot convert, so the 14 qMRLab targets and qmrust, which all report seconds,
+  # are untouched by it. Declared here rather than inverted in the QUIT adapter so the
+  # derived number stays computed once in Python (spec §5.2).
+  - {name: T1,    unit: s,       comparison_range: [0, 10], transform: reciprocal}
+  # MTR = 100*(MToff - MTon)/MToff is bounded by ±100 for non-negative signals. Outside
+  # it, MToff was noise near zero and the ratio is measuring that division, not a
+  # saturation -- 44,670 in-mask voxels, down to -13,500.
+  - {name: MTR,   unit: percent, comparison_range: [-100, 100]}
