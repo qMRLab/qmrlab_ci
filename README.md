@@ -1,8 +1,10 @@
 # qmrlab_ci
 
-Fits the same eight qMRI models against the same fixed data using **every published
-qMRLab release**, qMRLab `master`, and [qmrust](https://github.com/qMRLab/qmrust) — then
-publishes each output map's statistics, byte-equivalence, and processing time.
+Fits the same qMRI models against the same fixed data using **every published qMRLab
+release**, qMRLab `master`, [qmrust](https://github.com/qMRLab/qmrust), and independent
+third-party software — [QUIT](https://github.com/spinicist/QUIT) and
+[SCT](https://github.com/spinalcordtoolbox/spinalcordtoolbox) — then publishes each output
+map's statistics, byte-equivalence, processing time, and cross-software agreement.
 
 > **Status: live.** The benchmark runs weekly (and on demand) and publishes to
 > **[qmrlab.org/qmrlab_ci](https://qmrlab.org/qmrlab_ci/)**. The full machine-readable
@@ -12,6 +14,12 @@ publishes each output map's statistics, byte-equivalence, and processing time.
 > [`data/history.jsonl`](https://qmrlab.org/qmrlab_ci/data/history.jsonl).
 
 ## What it answers
+
+**Do independent implementations agree?** Four software families fit the same bytes and
+are scored by the same code. Where they disagree, the site says whether that is an
+implementation difference or a modelling one — a difference nobody attributes is worse
+than no number, so every known cause is declared in `comparability.yml` and rendered as
+visible text beside the cell.
 
 **How have qMRLab's outputs and runtimes changed across its history?** Fifteen targets
 spanning 2016 to today, all fitting byte-identical input data, so a difference between two
@@ -36,7 +44,9 @@ sub-models. The second exists because QUIT implements only Ramani, so without it
 no cross-software qMT comparison at all.
 
 **Targets:** qMRLab `V1`, `v2.0.0`–`v2.0.5`, `v2.1.0`–`v3.0.0`, `master`, plus
-`qmrust@main`. Not every model exists in every release — `mt_ratio` arrives in v2.3.0,
+`qmrust@main`, `quit@v3.4` and `sct@7.3`. External tools are pinned to a release and
+never to a branch: QUIT's master has had no successful build since 2025-03-17 and
+publishes no binary, so `v3.4` is what can be reproduced. Not every model exists in every release — `mt_ratio` arrives in v2.3.0,
 `mono_t2` in v2.4.0, `b1_afi` in v2.5.0 — so those combinations render as declared holes,
 never as failures.
 
@@ -70,6 +80,8 @@ compare serializers rather than fits. See `harness/measure.py`.
 | Path | What it is |
 |---|---|
 | `targets/<software>@<version>/` | One directory per target. `target.yml` declares it; `setup.sh` holds its install fixes |
+| `protocols/*.yml` | Acquisition parameters per dataset, one source of truth each adapter renders its own config from |
+| `comparability.yml` | Per (model, map, software-pair): whether a difference is the same estimator, a related one, or incomparable — with the reason the site prints |
 | `models/*.yml` | Canonical model catalog: which maps, in which units |
 | `masks/` | Repo-owned masks, one per model, regenerable via `scripts/derive_masks.py` |
 | `data/sources.yml` | OSF archives pinned by version **and** SHA-256 |
