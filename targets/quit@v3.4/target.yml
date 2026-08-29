@@ -1,0 +1,20 @@
+id: quit@v3.4
+software: quit
+version: v3.4
+lane: native
+# The v3.4 RELEASE, not master. Master has had no successful CI build since 2025-03-17
+# (build.yml still points at a cmake/toolchain.cmake that commit cba3d0d3 deleted), has no
+# upload-artifact step so no master binary exists to download, and would therefore mean a
+# 45-90 minute cold vcpkg build of ITK + Ceres + VXL + GDCM with no evidence it compiles.
+# Consequence to state on the site: this is a 2023-11-29 build, and its `qi mtsat` uses the
+# small-flip-angle approximation that master later made optional. Every claim is scoped to
+# "QUIT v3.4", never "QUIT".
+source: {repo: spinicist/QUIT, ref: v3.4}
+# Five models, measured against the real archives rather than read from the docs.
+# Holes by omission: b1_dam (QUIT has no double-angle command at all -- its B1 module is
+# afi/dream/b1_papp), inversion_recovery (qi irtse expects polarity-restored data and this
+# archive is magnitude with the null inside the TI range), qmt_spgr (SledPikeRP; qi qmt is
+# Ramani-only) and qmt_spgr_ramani (not yet spiked).
+models: [vfa_t1, mono_t2, mt_ratio, b1_afi, mt_sat]
+# Every fit is sub-second on an emulated runner, so repeats are cheap.
+repeats: {default: 5}
