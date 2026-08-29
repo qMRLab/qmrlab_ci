@@ -35,11 +35,14 @@ class Nifti:
         # An unset slope disables the transform ENTIRELY -- including any intercept.
         # Folding this into the condition below instead would multiply by zero
         # whenever scl_inter is nonzero, which is the one thing the spec explicitly
-        # forbids. "Unset" is spelled two ways in the wild: the spec's zero, and the
-        # NaN that ITK writes to mean "no scaling" -- hence every file QUIT produces.
-        # NaN fails an equality test, so without the isfinite guard a QUIT map would
-        # scale to NaN * out + NaN: every voxel NaN with nothing raising, because the
-        # record still validates as 'ok' and the statistics just go quietly to n=0.
+        # forbids. "Unset" is spelled two ways in the wild: the spec's zero,
+        # and a non-finite slope, which is what nibabel treats as unset. NaN fails an
+        # equality test, so without the isfinite guard such a map scales to
+        # NaN * out + NaN: every voxel NaN with nothing raising, because the record
+        # still validates as 'ok' and the statistics just go quietly to n=0.
+        # Hardening, not a fix for a known writer -- real qi v3.4 output was checked at
+        # the byte level and writes slope 1.0. No file in this repo has a non-finite
+        # slope either, so this guard has never yet changed a published number.
         if not np.isfinite(self.scl_slope) or self.scl_slope == 0.0:
             return out
         if self.scl_slope != 1.0 or self.scl_inter != 0.0:

@@ -233,11 +233,11 @@ Six. Each is required by a specific new tool; none is speculative.
 
 ### 5.1 Non-finite `scl_slope` (bug fix)
 
-`harness/nifti.py` guards only `scl_slope == 0.0`. ITK — and therefore every file QUIT
-writes — uses **NaN** for "no scaling". NaN fails that guard, so `values` computes
-`NaN * out + NaN` and every voxel becomes NaN. **Nothing raises.** The record validates as
-`ok`, `masked_stats` returns `n=0` with `None` for every statistic, and the map joins a
-shared equivalence bucket. Reproduced in session:
+`harness/nifti.py` guards only `scl_slope == 0.0`. The spec's zero is one way "unset" is
+spelled; a **non-finite** slope is the other, and it is what nibabel treats as unset. NaN
+fails that guard, so `values` computes `NaN * out + NaN` and every voxel becomes NaN.
+**Nothing raises.** The record validates as `ok`, `masked_stats` returns `n=0` with `None`
+for every statistic, and the map joins a shared equivalence bucket. Reproduced in session:
 
 ```
 itk_nan   slope=nan inter=nan   values=[nan nan nan nan]
@@ -253,6 +253,16 @@ if not np.isfinite(self.scl_slope) or self.scl_slope == 0.0:
 
 Matches nibabel. Verified safe: 0 of 63 NIfTI files in the repo (all committed maps, all
 masks, all OSF inputs) have a non-finite slope, so no existing hash or statistic moves.
+
+**Corrected 2026-08-28.** An earlier draft of this section claimed ITK, and therefore every
+file QUIT writes, uses NaN for "no scaling" — and that a QUIT lane would consequently
+publish as green-and-empty. **That is false, and was refuted by measurement.** Real
+`qi` v3.4 output, read at the byte level rather than through our own reader, carries
+`scl_slope = 1.0, scl_inter = 0.0` on every map checked (`D1_T1`, `ME_T2`, `QMT_f_b`,
+`MTSat_delta`). The guard is still incomplete and the failure it prevents is still silent
+and real, so the fix stands — but it is defensive hardening against a convention some
+writer may use, not a blocker on the QUIT lane. The claim entered this spec from source
+reading and should not have been stated as fact about QUIT's output before anyone ran it.
 
 ### 5.2 `MapSpec.transform: reciprocal`
 
