@@ -1,0 +1,17 @@
+id: sct@7.3
+software: sct
+version: "7.3"
+lane: native
+source: {repo: spinalcordtoolbox/spinalcordtoolbox, ref: "7.3"}
+# Two models, no holes. SCT 7.3 has no T1/T2/B1/qMT command of any kind -- verified
+# against the full 59-script listing of the tag -- so the other seven models are declared
+# holes by omission, the way every capability gap in this repo is.
+#
+# mt_sat carries all THREE maps, not two. sct_compute_mtsat emits only MTsat and T1, but
+# qMRLab's mt_sat MTR is exactly 100*(PDw - MTw)/PDw and a second sct_compute_mtr call on
+# those two images reproduces it at ccc = 1.0 (measured). Declaring MTR a hole would have
+# understated what SCT can actually do here.
+models: [mt_ratio, mt_sat]
+# Both commands are ~1.5-3.1 s wall, of which 1.2-1.7 s is Python interpreter startup, so
+# 5 repeats is cheap. See run.sh on what that startup does to the timing number.
+repeats: {default: 5}

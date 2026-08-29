@@ -5,8 +5,23 @@ from harness.config import load_models, load_targets
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def test_all_fifteen_targets_are_declared():
-    assert len(load_targets(ROOT)) == 15
+def test_every_declared_target_is_loadable_and_the_families_are_what_we_think():
+    """Counted by software family rather than as one total.
+
+    A bare `== 15` was fine while every target was qMRLab plus qmrust, but it says nothing
+    about WHICH target went missing, and a cross-software benchmark's interesting failure
+    is a whole family vanishing rather than the count being off by one.
+    """
+    targets = load_targets(ROOT)
+
+    families: dict[str, int] = {}
+    for target in targets.values():
+        families[target.software] = families.get(target.software, 0) + 1
+
+    assert families["qmrlab"] == 14
+    assert families["qmrust"] == 1
+    assert families["sct"] == 1
+    assert len(targets) == sum(families.values())
 
 
 def test_every_declared_model_exists_in_the_catalog():
