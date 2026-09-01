@@ -595,7 +595,7 @@ LIVE = pathlib.Path("/tmp/live.json")
 
 TAB_PANES = ("overview", "cross", "agree", "values", "timing", "data")
 
-SUMMARY_DOCS = ("DOC", "FOUR_STATE_DOC", "THREE_FAMILY", "live")
+SUMMARY_DOCS = ("DOC", "FOUR_STATE_DOC", "THREE_FAMILY", "SCATTER", "live")
 
 
 def _summary_doc(name):
@@ -611,7 +611,7 @@ def _summary_doc(name):
             pytest.skip(f"no local copy of the published results.json at {LIVE}")
         return json.loads(LIVE.read_text())
     return {"DOC": DOC, "FOUR_STATE_DOC": FOUR_STATE_DOC,
-            "THREE_FAMILY": THREE_FAMILY}[name]
+            "THREE_FAMILY": THREE_FAMILY, "SCATTER": SCATTER}[name]
 
 
 def _pane(page, name):
@@ -802,3 +802,385 @@ def test_the_summary_block_is_styled_from_the_theme_tokens_only():
 
     assert "var(--" in block
     assert "#" not in block
+
+
+# --- the cross-software scatterplots --------------------------------------------------
+#
+# The request these answer: "correlation scatterplots between the latest of each software
+# and the latest qMRLab, cycle between methods via tabs or a dropdown menu."
+#
+# A scatterplot is an argument, and a careless one misleads more efficiently than a table
+# ever could -- so what is tested here is mostly the drawing rules rather than the pixels:
+# the identity line is present, the axes are labelled with the unit, both share one range,
+# the count is encoded rather than every cell drawn at full strength, and the voxels the
+# picture does not show are counted where the reader can see them.
+#
+# The scatter block is written by harness/analyze.py and drawn here, and the two landed
+# separately. Both halves of that are tested: a document carrying the shape draws plots,
+# and a document with none renders the same tab without raising.
+
+# One diagonal ridge, a couple of off-diagonal cells, and one lonely voxel, in the shape
+# the data contract fixes: sparse [ix, iy, n] over a 48x48 grid.
+CELLS = [[10, 10, 40], [11, 11, 900], [12, 12, 320], [12, 14, 6], [30, 27, 1]]
+
+
+def _scatter(cells=None, *, lo=0.0, hi=2.0, n=27417, n_clipped=9, bins=48):
+    return {"bins": bins, "x_range": [lo, hi], "y_range": [lo, hi],
+            "cells": [list(c) for c in (CELLS if cells is None else cells)],
+            "n": n, "n_clipped": n_clipped}
+
+
+def _with_scatter(doc, **by_pair):
+    """`doc` with a scatter attached to named (model/map, target) pairs."""
+    out = json.loads(json.dumps(doc))
+    for key, scatter in by_pair.items():
+        model, map_name, target = key.split("__")
+        for pair in out["comparisons"][model][map_name]:
+            if any(target in side for side in (pair["a"], pair["b"])):
+                pair["scatter"] = scatter
+    return out
+
+
+SCATTER = _with_scatter(
+    {**THREE_FAMILY,
+     "records": THREE_FAMILY["records"] + [
+         # A scale-free map, so the axis label has to say "multiples of each map's own
+         # masked median" rather than print the unit the record carries.
+         _rec("qmrlab@v3.0.0", "qmrlab", "v3.0.0", "vfa_t1", [("M0", "au", "f" * 64, 0)]),
+         _rec("qmrust@main", "qmrust", "main", "vfa_t1", [("M0", "au", "g" * 64, 0)]),
+     ],
+     "comparisons": {**THREE_FAMILY["comparisons"], "vfa_t1": {"M0": [
+         _pair("qmrlab@v3.0.0", "qmrust@main", scale_free=True,
+               scale_ratio_not_a_disagreement=1.04, rel_median_diff=0.004, ccc=0.981),
+     ]}}},
+    # Every cross-software pair, which is what the contract says a run carries: the
+    # same-family and historical pairs deliberately have none.
+    mt_ratio__MTR__sct=_scatter(),
+    mt_ratio__MTR__qmrust=_scatter(lo=-4.0, hi=61.0, n=5000, n_clipped=3),
+    mt_sat__T1__qmrust=_scatter(lo=0.4, hi=1.9, n=8000, n_clipped=0),
+    vfa_t1__M0__qmrust=_scatter(lo=0.2, hi=3.1, n=1200, n_clipped=44),
+)
+
+
+def _plots(pane):
+    return [chunk.split("</figure>")[0]
+            for chunk in pane.split('<figure class="plot">')[1:]]
+
+
+def _plot_named(pane, needle):
+    found = [p for p in _plots(pane) if needle in p.split("</h3>")[0]]
+    assert len(found) == 1, f"{needle}: {len(found)} plots"
+    return found[0]
+
+
+def _options(pane, control):
+    block = pane.split(f'<select data-controls="{control}">')[1].split("</select>")[0]
+    return re.findall(r'<option value="([^"]*)"', block)
+
+
+def test_a_document_with_no_scatter_data_still_renders_the_tab():
+    """The requirement these two slices compose under: analyze writes the density and
+    this renders it, they land separately, and the page in between must be the page
+    before it -- not a heading over an apology, and not a traceback."""
+    pane = _cross_pane(render(THREE_FAMILY))
+
+    assert "Agreement with the reference" in pane          # the tab is intact
+    assert 'data-controls="scat"' not in pane
+    assert '<figure class="plot">' not in pane
+    assert "scatterplot" not in pane                       # nothing announces the absence
+
+
+def test_one_plot_per_map_and_software_with_density_published():
+    pane = _cross_pane(render(SCATTER))
+
+    assert len(_plots(pane)) == 4
+    for header in ("MTR · sct 7.3", "MTR · qmrust main", "T1 · qmrust main",
+                   "M0 · qmrust main"):
+        assert header in pane, header
+    # The reference against its own family is version history, and is not plotted.
+    assert "MTR · qmrlab master" not in pane
+
+
+def test_every_software_of_the_selected_model_is_in_one_pane_to_compare():
+    """"Within the selected model, show every (map x software) plot": two softwares on
+    mt_ratio are two plots in the same pane, side by side, not two panes."""
+    pane = _cross_pane(render(SCATTER))
+    mt_ratio = pane.split('data-key="mt_ratio"')[1].split("</div></div>")[0]
+
+    assert len(_plots(mt_ratio)) == 2
+    assert ".plots{display:flex;flex-wrap:wrap" in _CSS
+
+
+def test_the_dropdown_lists_exactly_the_models_that_have_scatter_data():
+    """mt_ratio, mt_sat and vfa_t1 carry density; a model in the run without any must
+    not appear as an option that selects an empty pane."""
+    pane = _cross_pane(render(SCATTER))
+
+    assert _options(pane, "scat") == ["mt_ratio", "mt_sat", "vfa_t1"]
+    for model in ("mt_ratio", "mt_sat", "vfa_t1"):
+        assert f'data-group="scat" data-key="{model}"' in pane
+
+
+def test_the_dropdown_reuses_the_pages_existing_control_and_no_framework():
+    """The page already toggles data-group panes from a data-controls select. A second
+    mechanism for the same job is a second thing to keep working, and the whole page
+    still ships exactly one inline script and no assets."""
+    page = render(SCATTER)
+
+    assert page.count("<script>") == 1
+    assert "<script src=" not in page
+    assert 'select[data-controls]' in page       # the six lines that already do this
+    assert 'data-group="scat"' in _cross_pane(page)
+
+
+def test_a_model_with_no_scatter_gets_no_option():
+    doc = _with_scatter(SCATTER)                 # every scatter dropped again
+    for by_map in doc["comparisons"].values():
+        for pairs in by_map.values():
+            for pair in pairs:
+                pair.pop("scatter", None)
+    doc["comparisons"]["mt_sat"]["T1"][0]["scatter"] = _scatter()
+
+    pane = _cross_pane(render(doc))
+
+    assert _options(pane, "scat") == ["mt_sat"]
+
+
+def test_the_identity_line_is_drawn_and_named():
+    """Agreement is the diagonal: the line is the argument the plot is making."""
+    plot = _plot_named(_cross_pane(render(SCATTER)), "MTR · sct 7.3")
+
+    assert 'class="idl"' in plot
+    assert ">y = x<" in plot
+
+
+def test_the_identity_line_is_the_diagonal_of_the_plot_frame():
+    """Corner to corner, or the line drawn as y = x is not y = x. It only is one because
+    both axes share a range and the plot area is square -- the failure this prevents is a
+    diagonal at 40 degrees, which the eye reads as a bias that is not in the data."""
+    plot = _plot_named(_cross_pane(render(SCATTER)), "MTR · sct 7.3")
+    frame = re.search(r'<rect class="frame" x="([\d.]+)" y="([\d.]+)" '
+                      r'width="([\d.]+)" height="([\d.]+)"', plot)
+    x, y, w, h = (float(v) for v in frame.groups())
+    line = re.search(r'<path class="idl" d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"', plot)
+    x0, y0, x1, y1 = (float(v) for v in line.groups())
+
+    assert w == h                                # square, so 45 degrees is 45 degrees
+    assert (x0, y0) == (x, y + h)                # bottom left
+    assert (x1, y1) == (x + w, y)                # top right
+
+
+def test_the_plot_is_square_and_scales_without_distorting():
+    """A viewBox and height:auto, or a card narrower than the plot squashes one axis and
+    puts the identity line at an angle the data never had."""
+    plot = _plot_named(_cross_pane(render(SCATTER)), "MTR · sct 7.3")
+    box = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', plot)
+
+    assert box
+    assert ".plot svg{width:100%;height:auto}" in _CSS
+
+
+def _cell_paths(plot):
+    """(fill-opacity, [subpath, ...]) per drawn shade, in document order.
+
+    Cells sharing a shade share one <path>: one element per cell put a megabyte of
+    <rect> on a page every visitor fetches. What a reader sees is unchanged, so the
+    assertions below are still about cells and about opacity.
+    """
+    return [(float(o), re.findall(r"M[\d.]+ [\d.]+", d)) for o, d in re.findall(
+        r'<path class="cells" fill="var\(--s1\)" fill-opacity="([\d.]+)" d="([^"]+)"',
+        plot)]
+
+
+def test_every_published_cell_is_drawn():
+    plot = _plot_named(_cross_pane(render(SCATTER)), "MTR · sct 7.3")
+
+    assert sum(len(cells) for _, cells in _cell_paths(plot)) == len(CELLS)
+
+
+def test_cell_opacity_is_monotonic_in_the_voxel_count():
+    """These are density cells, not points. Drawing them all at full strength would make
+    a dense core and a one-voxel halo look identical, which is the whole difference the
+    plot exists to show -- and the caption says which encoding it is.
+
+    Four cells on the diagonal, of counts 1 to 4: the count rises with ix, so if opacity
+    rises with the count then both opacity and x rise together down the drawn list. The
+    assertion is on the picture rather than on the formula that produced it.
+    """
+    pane = _cross_pane(render(_with_scatter(
+        SCATTER, mt_ratio__MTR__sct=_scatter(
+            cells=[[i, i, i + 1] for i in range(4)], n=10, n_clipped=0))))
+    drawn = _cell_paths(_plot_named(pane, "MTR · sct 7.3"))
+    opacity = [o for o, _ in drawn]
+    left = [float(cells[0].split()[0][1:]) for _, cells in drawn]
+
+    assert len(drawn) == 4                       # four counts, four distinct shades
+    assert opacity == sorted(opacity) and left == sorted(left)
+    assert min(opacity) > 0                      # the single-voxel bin is still visible
+    assert max(opacity) == 1.0                   # and the fullest bin is opaque
+    assert "square root of the voxel count" in pane
+
+
+def test_both_axes_name_the_map_and_its_canonical_unit():
+    """An unlabelled quantitative axis is how a reader mistakes seconds for
+    milliseconds; here the two axes are also two different softwares."""
+    plot = _plot_named(_cross_pane(render(SCATTER)), "T1 · qmrust main")
+
+    assert "T1 (s) — reference qmrlab v3.0.0" in plot
+    assert "T1 (s) — qmrust main" in plot
+
+
+def test_a_scale_free_plot_says_its_axes_are_medians_not_values():
+    """Spec §7: both maps were divided by their own masked median before anything was
+    measured, so an axis labelled 'au' would be a wrong unit under a right number."""
+    plot = _plot_named(_cross_pane(render(SCATTER)), "M0 · qmrust main")
+
+    assert "M0 (× own masked median)" in plot
+    assert "au" not in plot
+    assert "multiples of each map's own masked median" in plot
+
+
+def test_n_and_the_clipped_count_are_printed_beside_the_plot():
+    """A cloud that silently dropped its tail is a lie of omission, and this page has
+    already shipped one leverage bug."""
+    plot = _plot_named(_cross_pane(render(SCATTER)), "MTR · sct 7.3")
+
+    assert "27,417 voxels drawn" in plot
+    assert "9 outside the axes" in plot
+
+
+def test_the_flag_and_its_two_numbers_sit_beside_the_plot():
+    """The picture and the number have to be read together, or a cloud that looks tight
+    beside a CCC of 0.712 is two findings instead of one."""
+    plot = _plot_named(_cross_pane(render(SCATTER)), "MTR · sct 7.3")
+
+    assert "red" in plot                          # and never as colour alone
+    assert "-13.2%" in plot
+    assert "0.712" in plot
+    assert "var(--crit)" in plot
+
+
+def test_an_unclassified_pair_is_not_drawn_as_a_passing_one():
+    doc = _with_scatter(SCATTER)
+    doc["comparisons"]["mt_sat"]["T1"][0].pop("flag")
+    doc["comparisons"]["mt_sat"]["T1"][0].pop("flag_reason")
+
+    plot = _plot_named(_cross_pane(render(doc)), "T1 · qmrust main")
+
+    assert "not classified" in plot
+    assert "var(--good)" not in plot
+
+
+def test_a_measured_pair_with_no_density_is_named_not_silently_missing():
+    """A gap in a grid of plots otherwise reads as a comparison nobody made."""
+    doc = _with_scatter(SCATTER)
+    doc["comparisons"]["mt_sat"]["T1"][0].pop("scatter")
+
+    pane = _cross_pane(render(doc))
+
+    assert len(_plots(pane)) == 3
+    assert "Not plotted: mt_sat / T1 vs qmrust main" in pane
+
+
+def test_a_null_scatter_reads_as_absent_rather_than_as_an_error():
+    """compare_maps returns None where the middle 99% of a selection is a single value,
+    and analyze writes that through as null: no picture, no traceback."""
+    doc = _with_scatter(SCATTER)
+    doc["comparisons"]["mt_ratio"]["MTR"][2]["scatter"] = None
+
+    pane = _cross_pane(render(doc))
+
+    assert len(_plots(pane)) == 3
+
+
+@pytest.mark.parametrize("broken, match", [
+    ({"bins": 0}, "bins"),
+    ({"bins": 48.5}, "bins"),
+    ({"x_range": [2.0, 1.0]}, "inverted"),
+    ({"y_range": [0.0, float("nan")]}, "finite"),
+    ({"x_range": [0.0]}, r"\[lo, hi\]"),
+    ({"cells": [[0, 0]]}, r"\[ix, iy, n\]"),
+    ({"cells": [[48, 0, 3]]}, "outside the 48x48 grid"),
+    ({"cells": [[0, 0, 0]]}, "whole number"),
+    ({"cells": "dense"}, "must be a list"),
+])
+def test_a_scatter_that_cannot_be_drawn_raises_rather_than_being_guessed(broken, match):
+    """_flag_of's rule, applied to the picture: absent is normal, present-but-unusable is
+    two halves disagreeing about the contract. A guess here draws a plot that contradicts
+    the statistics beside it, and the reader resolves that in the picture's favour."""
+    doc = _with_scatter(SCATTER, mt_ratio__MTR__sct={**_scatter(), **broken})
+
+    with pytest.raises(ValueError, match=match) as raised:
+        render(doc)
+    # The message names the file and the row, or it is a needle in a 1.5 MB haystack.
+    assert "results.json comparisons.mt_ratio.MTR" in str(raised.value)
+    assert "sct@7.3" in str(raised.value)
+
+
+def test_an_integral_float_count_is_read_rather_than_refused():
+    """A count that has been through a float column arrives as 27417.0, and losing the
+    plots over a serialisation detail helps nobody."""
+    pane = _cross_pane(render(_with_scatter(
+        SCATTER, mt_ratio__MTR__sct=_scatter(cells=[[10.0, 10.0, 40.0]], n=40.0))))
+
+    assert "40 voxels drawn" in _plot_named(pane, "MTR · sct 7.3")
+
+
+def test_a_degenerate_range_is_widened_rather_than_dividing_by_zero():
+    """Every selected voxel identical is real data, not a writer bug."""
+    pane = _cross_pane(render(_with_scatter(
+        SCATTER, mt_ratio__MTR__sct=_scatter(cells=[[0, 0, 5]], lo=1.5, hi=1.5))))
+
+    assert "nan" not in pane
+    assert _plot_named(pane, "MTR · sct 7.3")
+
+
+def test_the_axis_crop_is_disclosed_with_the_count_it_left_out():
+    """Spec §7.3: a decision this page made for the reader, as visible text, with its
+    number generated rather than typed."""
+    pane = _visible(_cross_pane(render(SCATTER)))
+    clipped = 9 + 3 + 0 + 44
+
+    assert "scatterplots crop their axes" in pane
+    assert f"{clipped:,} the axes of the 4 plots leave out" in pane
+    assert "scatterplots crop" not in _visible(_cross_pane(render(THREE_FAMILY)))
+
+
+def test_the_lede_counts_the_plots_the_tab_draws():
+    """Recounted from the rendered plots, the rule every figure on this page follows."""
+    pane = _cross_pane(render(SCATTER))
+    figures = _figures(pane)
+
+    assert figures["scatterplots"] == f"{len(_plots(pane)):,}"
+    assert "scatterplots" not in _figures(_cross_pane(render(THREE_FAMILY)))
+
+
+def test_the_plots_are_styled_from_the_theme_tokens_only():
+    """Two themes, no assets: a colour written into these rules would be right in one
+    theme and unreadable in the other."""
+    block = _CSS[_CSS.index(".plots{"):]
+
+    assert "#" not in block
+    assert "var(--" in block
+
+
+def test_no_scatter_label_is_drawn_outside_its_svg():
+    """The same rule the other charts are held to, on the newest one: a label at negative
+    x is clipped away by the viewport with no error and no gap in the chart to notice.
+    (Separate from the parametrized case above only because SCATTER is defined here, at
+    the foot of the file, and a parametrize list is built at import time.)"""
+    assert re.findall(r'(?:x|y|width|height)="(-[\d.]+)"', render(SCATTER)) == []
+
+
+def test_every_plot_on_the_tab_is_the_same_size():
+    """They are laid out side by side to be compared, and two plots that differ by a few
+    per cent because one axis label is a digit longer cannot be. The ranges differ per
+    pair on purpose; the geometry must not."""
+    pane = _cross_pane(render(SCATTER))
+    boxes = set(re.findall(r'viewBox="([^"]+)"', pane))
+
+    assert len(boxes) == 1
+    for plot in _plots(pane):
+        frame = re.search(r'<rect class="frame"[^>]*width="([\d.]+)" height="([\d.]+)"',
+                          plot)
+        assert frame.group(1) == frame.group(2)

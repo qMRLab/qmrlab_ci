@@ -14,6 +14,7 @@ and always ship with a text label, never colour alone.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import html
 import json
 import math
@@ -126,6 +127,22 @@ border:1px solid var(--rule);border-radius:5px;font:inherit;font-size:.8rem;padd
 svg{display:block;max-width:100%}
 svg text{fill:var(--ink2);font-size:11px}
 svg .ax{stroke:var(--rule);stroke-width:1}
+/* Scatter cards. The plots are read side by side, so they are fixed-width cards in a
+   wrap rather than one chart per row. The SVG scales with its card and keeps its own
+   aspect (viewBox + height:auto) because the square is load-bearing: the identity line
+   is at 45 degrees only while the two axes are the same length in pixels, and a squashed
+   plot shows the reader a bias that is not in the data. */
+.plots{display:flex;flex-wrap:wrap;gap:1rem 1.1rem;margin:0 0 1.3rem}
+.plot{flex:0 1 316px;min-width:248px;margin:0}
+.plot svg{width:100%;height:auto}
+.plot h3{font:inherit;font-size:.85rem;font-weight:600;margin:0 0 .3rem}
+.plot p{margin:.3rem 0 0;font-size:.78rem;color:var(--ink2)}
+.plot p b{color:var(--ink)}
+/* The flag beside a plot never travels as colour alone -- same rule as the legends. */
+.plot i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:.3rem;
+vertical-align:-1px}
+svg .frame{fill:none;stroke:var(--rule);stroke-width:1}
+svg .idl{fill:none;stroke:var(--ink3);stroke-width:1;stroke-dasharray:4 3}
 """
 
 _JS = """
@@ -988,7 +1005,7 @@ def _published_n(doc):
             for r in doc["records"] for m in r["maps"]}
 
 
-def _disclosures(doc, cross, rows, dropped):
+def _disclosures(doc, cross, rows, dropped, plotted=()):
     """Spec §7.3, every row, as visible text -- with its numbers generated, not typed.
 
     Each entry is a decision this benchmark made that changes a published number. A
@@ -1134,6 +1151,19 @@ def _disclosures(doc, cross, rows, dropped):
         + ("<br>" + "<br>".join(violations)
            if violations else " No pair in this run carries one.")))
 
+    if plotted:
+        clipped = sum(s.n_clipped or 0 for _, s in plotted)
+        items.append((
+            "The scatterplots crop their axes, and count what they cropped",
+            "Each plot's axes span the 0.5th to 99.5th percentile of its two maps "
+            "together, not their minimum and maximum: one diverged voxel would otherwise "
+            "squash the whole cloud into a corner, which is the same leverage failure "
+            "that put six spurious red flags on this site. The numbers beside each plot "
+            "are computed over every selected voxel, including the "
+            f"{clipped:,} the axes of the {len(plotted)} plots leave out — so the crop "
+            "changes the picture and never the statistic, and each plot prints how much "
+            "of its own selection it is not showing."))
+
     if dropped:
         items.append((
             "The other five tabs are version history only",
@@ -1154,6 +1184,386 @@ def _disclosures(doc, cross, rows, dropped):
             f"</tr>{body}</table></div>")
 
 
+# ------------------------------------------------------- cross-software scatterplots
+
+# One plot is 232 px square. The square is load-bearing rather than decorative: the
+# identity line is at 45 degrees only while both axes carry the same range AND the same
+# number of pixels, and a reader looking at a diagonal drawn at 40 degrees reads a bias
+# the data does not contain.
+_PLOT_SIDE = 232
+
+# The faintest a populated bin is ever drawn. A bin holding one voxel must still be
+# visible: the sparse halo is where two implementations disagree, so an encoding that
+# faded it to nothing would hide the very voxels the plot is drawn to show.
+_CELL_FLOOR = 0.14
+
+
+@dataclasses.dataclass(frozen=True)
+class _Scatter:
+    """One pair's 2-D density, as analyze.py publishes it, validated once here.
+
+    Sparse: `cells` holds only non-empty bins, as (ix, iy, n) with 0-based indices into a
+    `bins` x `bins` grid. `n` is how many voxels entered the histogram and `n_clipped` how
+    many were inside the comparison selection but outside the axis range -- excluded from
+    the picture and counted, never silently dropped.
+    """
+
+    bins: int
+    x_range: tuple[float, float]
+    y_range: tuple[float, float]
+    cells: tuple[tuple[int, int, int], ...]
+    n: int | None
+    n_clipped: int | None
+
+
+def _pair_where(row):
+    """Where an error in one pair row is, as a reader of results.json would find it."""
+    pair = row["pair"]
+    return (f"results.json comparisons.{row['model']}.{row['map']}: "
+            f"{pair.get('a')} vs {pair.get('b')}")
+
+
+def _scatter_int(value, where, field, *, minimum=0):
+    """One whole-number field of a scatter block, or an error naming file and field.
+
+    An integral float is accepted because a count that has been through a float column on
+    its way to JSON arrives as 27417.0, and refusing that would take the whole page down
+    over a serialisation detail. A genuinely fractional value is refused: a fractional bin
+    index or a fractional voxel count is a bug in the writer, and rounding it here would
+    draw the wrong cell in a place that looks entirely right.
+    """
+    ok = isinstance(value, int) and not isinstance(value, bool)
+    if not ok and isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        value, ok = int(value), True
+    if not ok or value < minimum:
+        raise ValueError(f"{where}: scatter.{field} must be a whole number "
+                         f">= {minimum}, got {value!r}")
+    return value
+
+
+def _scatter_axis(value, where, field):
+    """One [lo, hi] axis range, validated. Bounds are drawn on the page, so they are
+    checked here rather than assumed: an inverted or non-finite range would put every
+    cell of the plot at a nonsense coordinate and label the axis with it."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"{where}: scatter.{field} must be [lo, hi], got {value!r}")
+    lo, hi = value
+    for name, bound in ((f"{field}[0]", lo), (f"{field}[1]", hi)):
+        if (isinstance(bound, bool) or not isinstance(bound, (int, float))
+                or not math.isfinite(bound)):
+            raise ValueError(
+                f"{where}: scatter.{name} must be a finite number, got {bound!r}")
+    if hi < lo:
+        raise ValueError(f"{where}: scatter.{field} is inverted: [{lo!r}, {hi!r}]")
+    return float(lo), float(hi)
+
+
+def _scatter_of(pair, where):
+    """The validated density block for one pair, or None where the pair carries none.
+
+    ABSENT is the normal case and never an error, for _flag_of's first reason: this
+    renderer and the analyze-side writer land independently, and a page that rendered only
+    once the other half existed would take the site down in between. Same-family pairs and
+    every historical version pair are deliberately without one — that data is heavy, and
+    the version story is the other five tabs' subject — so "no scatter here" is also what
+    a correct, complete run looks like on most rows.
+
+    PRESENT-but-unusable raises, for _flag_of's other reason: a bin index outside the grid
+    or an inverted range cannot be drawn without guessing, and the guess would be a
+    picture that contradicts the statistics printed beside it. When a picture and a number
+    disagree, the picture is what the reader remembers, so it must not be drawn at all.
+    """
+    scatter = pair.get("scatter")
+    if scatter is None:
+        return None
+    if not isinstance(scatter, dict):
+        raise ValueError(
+            f"{where}: scatter must be an object, got {type(scatter).__name__}")
+    bins = _scatter_int(scatter.get("bins"), where, "bins", minimum=1)
+    x_range = _scatter_axis(scatter.get("x_range"), where, "x_range")
+    y_range = _scatter_axis(scatter.get("y_range"), where, "y_range")
+    raw = scatter.get("cells")
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{where}: scatter.cells must be a list, got {type(raw).__name__}")
+    cells = []
+    for i, cell in enumerate(raw):
+        if not isinstance(cell, (list, tuple)) or len(cell) != 3:
+            raise ValueError(
+                f"{where}: scatter.cells[{i}] must be [ix, iy, n], got {cell!r}")
+        ix = _scatter_int(cell[0], where, f"cells[{i}][0]")
+        iy = _scatter_int(cell[1], where, f"cells[{i}][1]")
+        count = _scatter_int(cell[2], where, f"cells[{i}][2]", minimum=1)
+        if ix >= bins or iy >= bins:
+            # Clamping an out-of-grid index would put those voxels in a bin they are not
+            # in and draw it with total confidence.
+            raise ValueError(f"{where}: scatter.cells[{i}] indexes ({ix}, {iy}) outside "
+                             f"the {bins}x{bins} grid")
+        cells.append((ix, iy, count))
+    total, clipped = scatter.get("n"), scatter.get("n_clipped")
+    return _Scatter(
+        bins=bins, x_range=x_range, y_range=y_range, cells=tuple(cells),
+        n=None if total is None else _scatter_int(total, where, "n"),
+        n_clipped=None if clipped is None else _scatter_int(clipped, where, "n_clipped"),
+    )
+
+
+def _scatter_rows(doc, rows):
+    """(row, density) for every pair this run published a scatter for, in draw order.
+
+    Shared with the tab's summary and with the disclosure under it, for _value_rows'
+    reason: a summary that selected its own rows would be free to claim more plots than
+    the tab draws, and a headline that contradicts the thing it introduces is worse than
+    no headline.
+    """
+    out = []
+    for row in rows:
+        scatter = _scatter_of(row["pair"], _pair_where(row))
+        if scatter is not None:
+            out.append((row, scatter))
+    return out
+
+
+def _cross_family_rows(doc, rows):
+    """The rows pairing the reference with a DIFFERENT software family.
+
+    The set that is supposed to carry a scatter. Used only to say how many of them do not:
+    a plot missing from a grid of plots reads as a comparison that was never made, and
+    this page has a rule about exclusions nobody can see.
+    """
+    facets = _facets(doc)
+    ref = doc.get("reference")
+    ref_family = facets.get(ref, ("", ""))[0]
+    return [r for r in rows if facets.get(r["target"], ("", ""))[0] != ref_family]
+
+
+def _canonical_units(doc):
+    """(model, map) -> the unit its statistics, and therefore its scatter axes, are in.
+
+    Read from the records' `stats_unit`, because the pair row carries no unit at all:
+    analyze converts every map to the model's canonical unit before comparing anything. An
+    axis labelled with the unit a software PRODUCED would print 'ms' under numbers that
+    are seconds, which is the misreading an unlabelled axis invites and a wrongly labelled
+    one guarantees.
+    """
+    out = {}
+    for record in doc["records"]:
+        for entry in record["maps"]:
+            unit = entry.get("stats_unit") or entry.get("unit")
+            if unit:
+                out.setdefault((record["model"], entry["name"]), unit)
+    return out
+
+
+def _shared_axis(scatter):
+    """The one range BOTH axes get: the union of the two, never one axis each.
+
+    The two ranges are the same percentile cut union-ed across both maps and so are equal
+    in practice; union-ing them again here is what guarantees y = x is drawable as the
+    exact diagonal of the square whatever arrives. A degenerate range — every selected
+    voxel identical — is widened rather than refused, because that is real data and not a
+    writer bug, and dividing by a zero span would place every cell at x = nan.
+    """
+    lo = min(scatter.x_range[0], scatter.y_range[0])
+    hi = max(scatter.x_range[1], scatter.y_range[1])
+    if hi <= lo:
+        pad = abs(lo) * 0.05 or 0.5
+        return lo - pad, hi + pad
+    return lo, hi
+
+
+def _scatter_ticks(scatter):
+    """(lo, hi, tick values, tick labels) for one plot, from the one shared range.
+
+    Two callers: the pass that measures a single label gutter for the whole tab, and the
+    draw itself. They read the same strings for _gutter's reason -- a gutter measured for
+    a label other than the one printed clips the one printed.
+    """
+    lo, hi = _shared_axis(scatter)
+    ticks = (lo, lo + (hi - lo) / 2.0, hi)
+    return lo, hi, ticks, [f"{v:.4g}" for v in ticks]
+
+
+def _scatter_svg(scatter, *, left, x_title, y_title, alt):
+    """One density plot: identity line, count-weighted cells, both axes labelled.
+
+    `left` is the label gutter, and it is passed in rather than measured here so that
+    every plot on the tab is the same size to the pixel. Plots that differ by a few per
+    cent because one axis label is a digit longer cannot be compared side by side, which
+    is the whole reason they are laid out side by side.
+    """
+    lo, hi, ticks, labels = _scatter_ticks(scatter)
+    span = hi - lo
+    side = _PLOT_SIDE
+    top, right, bottom = 12, 12, 34
+    width, height = left + side + right, top + side + bottom
+
+    def px(value):
+        return left + (value - lo) / span * side
+
+    def py(value):
+        return top + side - (value - lo) / span * side
+
+    out = [f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+           f'role="img" aria-label="{_e(alt)}">',
+           f'<rect class="frame" x="{left}" y="{top}" width="{side}" height="{side}" '
+           'rx="3"/>']
+    peak = max((n for _, _, n in scatter.cells), default=1)
+    x_bin = (scatter.x_range[1] - scatter.x_range[0]) / scatter.bins
+    y_bin = (scatter.y_range[1] - scatter.y_range[0]) / scatter.bins
+    # Every cell is the same size, because the bins are uniform and both axes are drawn
+    # on one range, so the size is computed once and only the corner varies.
+    cell_w = max(px(scatter.x_range[0] + x_bin) - px(scatter.x_range[0]), 0.8)
+    cell_h = max(py(scatter.y_range[0]) - py(scatter.y_range[0] + y_bin), 0.8)
+    steps = {}
+    for ix, iy, n in scatter.cells:
+        # Square root, and the caption says so. These are density cells and not points, so
+        # the count has to be encoded; linear opacity against a core bin holding thousands
+        # would render every other bin invisible, i.e. a plot showing its own mode and
+        # nothing else. The floor keeps the single-voxel halo drawn.
+        opacity = _CELL_FLOOR + (1.0 - _CELL_FLOOR) * math.sqrt(n / peak)
+        # Quantised to 1/24 of the range so that cells sharing a shade share one element.
+        # A step is well under what the eye resolves, and rounding keeps the encoding
+        # monotonic in n -- a denser bin can tie with a lighter one, never overtake it.
+        corner = (f"M{px(scatter.x_range[0] + ix * x_bin):.1f} "
+                  f"{py(scatter.y_range[0] + (iy + 1) * y_bin):.1f}")
+        steps.setdefault(round(opacity * 24) / 24.0, []).append(corner)
+    # One path per shade rather than one rect per cell. A cell costs ~25 bytes of path
+    # data against ~105 as its own element: across the 36 plots the published run draws,
+    # of some 460 cells each, that is a megabyte on a page every visitor fetches and
+    # 16,000 SVG nodes for a phone to lay out. Sorted, so the file is diffable.
+    for opacity, corners in sorted(steps.items()):
+        path = "".join(f"{c}h{cell_w:.1f}v{cell_h:.1f}h-{cell_w:.1f}z" for c in corners)
+        out.append(f'<path class="cells" fill="var(--s1)" '
+                   f'fill-opacity="{opacity:.3f}" d="{path}"/>')
+    # Corner to corner, which IS the line y = x — but only because both axes were given
+    # one range above and the plot area is square. Both are enforced, neither is a
+    # coincidence, and the line is the whole argument: agreement is the diagonal.
+    out.append(f'<path class="idl" d="M{left} {top + side}L{left + side} {top}"/>')
+    out.append(f'<text x="{left + 6}" y="{top + 12}" text-anchor="start" '
+               'style="font-size:9px">y = x</text>')
+    for value, text, anchor in zip(ticks, labels, ("start", "middle", "end")):
+        out.append(f'<text x="{px(value):.1f}" y="{top + side + 13}" '
+                   f'text-anchor="{anchor}" style="font-size:10px">{_e(text)}</text>')
+        out.append(f'<text x="{left - 5}" y="{py(value) + 3:.1f}" text-anchor="end" '
+                   f'style="font-size:10px">{_e(text)}</text>')
+    # Both axes name the map AND its unit. An unlabelled quantitative axis is how a reader
+    # mistakes seconds for milliseconds, and these two axes hold different softwares.
+    out.append(f'<text x="{width / 2:.1f}" y="{height - 6}" text-anchor="middle" '
+               f'style="font-size:10px">{_e(x_title)}</text>')
+    out.append(f'<text transform="translate(11,{top + side / 2:.1f}) rotate(-90)" '
+               f'text-anchor="middle" style="font-size:10px">{_e(y_title)}</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def _scatters(doc, rows, plotted):
+    """The scatterplots: a model dropdown, then every (map x software) plot inside it.
+
+    Returns "" when the run published no density at all, rather than a heading over an
+    apology. analyze writes the scatter and this renderer landed separately, and an empty
+    section on the live site would be one half of the work announcing the other half's
+    absence to every visitor. Pairs that are missing a plot while their neighbours have
+    one are named instead, because a gap in a grid of plots otherwise reads as a
+    comparison nobody made.
+
+    The dropdown is the page's existing control: a `<select data-controls=...>` over
+    `data-group`/`data-key` panes, toggled by the same six lines of inline JS that already
+    drive the Agreement and Values tabs. A second mechanism for the same job is a second
+    thing to keep working.
+    """
+    if not plotted:
+        return ""
+    units = _canonical_units(doc)
+    ref = doc.get("reference")
+    # One gutter for every plot on the tab, measured over every label any of them draws:
+    # the tick numbers are drawn 5 px inside it and the rotated axis title takes its first
+    # ~14 px, so the margin has to clear both, and a per-plot gutter would leave the plots
+    # a few pixels apart in size for no reason a reader could see.
+    gutter = max(_gutter(_scatter_ticks(sc)[3], size=10, margin=20) for _, sc in plotted)
+    groups = {}
+    for row, scatter in plotted:
+        pair = row["pair"]
+        model, map_name = row["model"], row["map"]
+        # Falls back rather than raising: a map no record declared a unit for is a
+        # different bug on a different tab, and it must not cost the page its plots.
+        unit = units.get((model, map_name)) or "unit not recorded"
+        if pair.get("scale_free"):
+            # Spec §7: both maps were divided by their own masked median before anything
+            # was measured, so these axes are multiples of a median and emphatically not
+            # 'au'. Printing the raw unit here would be the same class of error as
+            # labelling seconds as milliseconds.
+            unit = "× own masked median"
+        colour, _reason, _estimator = _flag_of(pair, _pair_where(row))
+        # The colour never travels alone: it ships beside the word it stands for, here and
+        # in every legend on this page.
+        swatch = _FLAG_COLOUR.get(colour, "var(--ink3)")
+        # x is the REFERENCE and y is the other software, per the data contract, so every
+        # plot on the tab is read the same way round: "what does this software do to
+        # qMRLab's number". Nothing in the row states the orientation -- the axes are the
+        # contract's, and the writer builds the histogram from (a, b) in that order, which
+        # is the same thing only while the reference id sorts first in the pair. It does
+        # for every family here (qmrust, quit, sct all sort after qmrlab); a family whose
+        # id sorted BEFORE it would transpose every one of its plots against these labels,
+        # silently. If that day comes the orientation belongs in the row, as a field.
+        x_title = (f"{map_name} ({unit}) — reference {_short(ref)}" if ref
+                   else f"{map_name} ({unit})")
+        y_title = f"{map_name} ({unit}) — {_short(row['target'])}"
+        parts = [
+            f'<h3>{_e(map_name)} · {_e(_short(row["target"]))}</h3>',
+            _scatter_svg(scatter, left=gutter, x_title=x_title, y_title=y_title,
+                         alt=f"{model} / {map_name}: {_short(ref)} on x against "
+                             f"{_short(row['target'])} on y, voxel density"),
+            # The flag and the two numbers it was earned from, beside the picture: read
+            # apart, a cloud that looks tight and a CCC of 0.71 are two different stories.
+            f'<p><i style="background:{swatch}"></i><b>{_e(colour or "not classified")}'
+            f'</b> · rel. median diff {_pct(pair.get("rel_median_diff"))} · CCC '
+            f'{_fmt(pair.get("ccc"), 4)}</p>',
+            # A cloud that silently dropped its tail is a lie of omission.
+            f'<p>{_count(scatter.n)} voxels drawn · {_count(scatter.n_clipped)} outside '
+            'the axes</p>',
+        ]
+        if pair.get("scale_free"):
+            parts.append("<p>Axes are multiples of each map's own masked median, not raw "
+                         "values.</p>")
+        groups.setdefault(model, []).append(
+            f'<figure class="plot">{"".join(parts)}</figure>')
+
+    models = [m for m in _models(doc) if m in groups]
+    options = "".join(f'<option value="{_e(m)}">{_e(m)}</option>' for m in models)
+    panes = "".join(
+        f'<div data-group="scat" data-key="{_e(m)}" hidden><div class="plots">'
+        + "".join(groups[m]) + "</div></div>" for m in models)
+
+    sizes = sorted({s.bins for _, s in plotted})
+    grid = f"{sizes[0]}&times;{sizes[0]}" if len(sizes) == 1 else "square"
+    drawn = {(row["model"], row["map"], row["target"]) for row, _ in plotted}
+    absent = [r for r in _cross_family_rows(doc, rows)
+              if (r["model"], r["map"], r["target"]) not in drawn]
+    caption = (
+        "<b>Agreement is the dashed diagonal.</b> Each plot bins its pair's voxels into a "
+        f"{grid} grid and draws one cell per non-empty bin, so a cell is a density and not "
+        "a voxel: <b>opacity rises with the square root of the voxel count in the cell</b>,"
+        " from the faintest single-voxel bin to the opaque core. Both axes carry the same "
+        "range — the 0.5th to 99.5th percentile of the two maps together, so that one "
+        "diverged voxel cannot squash the cloud into a corner — which is what puts the "
+        "identity line at 45°. Voxels outside that range are excluded from the picture and "
+        "counted under each plot. The voxels drawn are the ones the row above was measured "
+        "on: same mask, same finite filter, same declared range.")
+    if absent:
+        caption += (" Not plotted: "
+                    + _e("; ".join(f"{r['model']} / {r['map']} vs {_short(r['target'])}"
+                                   for r in absent))
+                    + " — measured above, but this run published no density for them.")
+    return ('<h2 style="font-size:1rem;margin:.4rem 0 .3rem">Voxel by voxel, against the '
+            "reference</h2>"
+            '<div class="ctl"><label>Model <select data-controls="scat">' + options
+            + "</select></label></div>"
+            f'<p class="sub" style="max-width:84ch">{caption}</p>' + panes)
+
+
 def _cross_software(doc, dropped):
     cross = _latest_of_each_software(doc)
     ref = doc.get("reference")
@@ -1163,19 +1573,27 @@ def _cross_software(doc, dropped):
         # target the page never shows.
         cross = _ordered(set(cross) | {ref})
     rows = _cross_rows(doc, cross)
+    # Validated once and passed on: the lede counts the plots, the plots are drawn from
+    # it, and the disclosure adds up what they clipped. Three readers of one list, for
+    # _value_rows' reason -- a second selection could disagree with the first.
+    plotted = _scatter_rows(doc, rows)
     return (
         # The paragraph that used to open this tab said what the lede's first two
         # sentences say, and said it after the reader had already scrolled past nothing:
         # two paragraphs making the same point is what "impossible to parse" is made of.
-        _lede_cross(doc, cross, rows)
+        _lede_cross(doc, cross, rows, plotted)
         + '<h2 style="font-size:1rem;margin:.4rem 0 .3rem">Coverage, and holes</h2>'
         + _coverage(doc, cross)
         + '<h2 style="font-size:1rem;margin:.4rem 0 .3rem">Agreement with the reference'
           "</h2>"
         + _cross_pairs(doc, cross, rows)
+        # The pictures directly under the numbers they belong to, so a reader meets both
+        # in one place; the plots carry their pair's flag, difference and CCC for the same
+        # reason. "" until a run publishes density data, so nothing announces its absence.
+        + _scatters(doc, rows, plotted)
         + '<h2 style="font-size:1rem;margin:.4rem 0 .3rem">What this page decided for you'
           "</h2>"
-        + _disclosures(doc, cross, rows, dropped)
+        + _disclosures(doc, cross, rows, dropped, plotted)
         + '<h2 style="font-size:1rem;margin:.4rem 0 .3rem">Masked statistics</h2>'
         + '<div class="scroll"><table><caption>The same statistics the Data tab '
           "publishes, for these targets. Each is computed on its model's full mask, "
@@ -1271,7 +1689,7 @@ def _lede_overview(history, dropped):
     return _lede(paragraphs, figures)
 
 
-def _lede_cross(doc, cross, rows):
+def _lede_cross(doc, cross, rows, plotted=()):
     families, states = _coverage_states(doc, cross)
     models = _models(doc)
     holes = sum(1 for m in models for f in families if states[(m, f)] == "hole")
@@ -1293,6 +1711,8 @@ def _lede_cross(doc, cross, rows):
     if counts.get(None):
         # An unclassified pair is not a passing one, so it is never folded into green.
         figures.append((f"{counts[None]:,}", "not classified", None))
+    if plotted:
+        figures.append((f"{len(plotted):,}", "scatterplots", None))
 
     ref = doc.get("reference")
     opening = "Do independent implementations of the same model agree today?"
@@ -1312,11 +1732,24 @@ def _lede_cross(doc, cross, rows):
         second += (" Compared today: "
                    + _e(", ".join(_short(t) for t in _ordered(cross))) + ".")
 
+    plots = ""
+    if plotted:
+        maps = len({(row["model"], row["map"]) for row, _ in plotted})
+        plots = (
+            "Under that table the same comparisons are drawn: one scatterplot per map and "
+            f"per software — {len(plotted)} of them across {maps} "
+            + ("map" if maps == 1 else "maps")
+            + ", the model chosen with the dropdown — with the reference on the "
+            "horizontal axis and the other software on the vertical one. Agreement is the "
+            "dashed diagonal: a cloud sitting parallel to it is a calibration offset, "
+            "which is the disagreement a correlation alone cannot show, and one that fans "
+            "out around it is noise.")
+
     third = ("The most common misreading is amber. It means the two implementations were "
              "never expected to produce the same number — a different estimator, a "
              "different convention, a different unit — and not that one of them nearly "
              "failed. Red is the colour to read as a finding.")
-    return _lede([opening, second, third], figures)
+    return _lede([opening, second] + ([plots] if plots else []) + [third], figures)
 
 
 def _lede_agree(doc):

@@ -11,6 +11,7 @@ import collections
 import itertools
 import json
 import pathlib
+import re
 
 import numpy as np
 
@@ -29,8 +30,70 @@ from harness.record import load_adapter_record
 from harness.units import scale_between
 
 
+# Versions that track a branch instead of naming a release, so "the latest" of a family
+# is not one target but two: the newest tag AND the moving stream. qMRLab publishes both
+# (v3.0.0 and master); qmrust ships only `main`, and SCT and QUIT only a tag, so those
+# families contribute one each.
+#
+# The same set and the same rule decide which rows the site's cross-software tab shows,
+# and the two MUST agree: a row there whose pair carries no scatter is a picture missing
+# with no explanation. They are written twice today only because this file may not edit
+# that one; the rule belongs in one module, and the day a third caller needs it that is
+# no longer optional.
+MOVING_VERSIONS = frozenset({"master", "main"})
+
+
 def _load_mask(root: pathlib.Path, path: str) -> np.ndarray:
     return read_nifti(pathlib.Path(root) / path).values
+
+
+def _latest_of_each_software(software: dict, version: dict) -> set:
+    """Each family's current target(s): its moving stream, and its newest release.
+
+    Derived from the declared `software`/`version` of the targets that actually appear,
+    never from a hardcoded list of ids: SCT and QUIT landed after this rule was written,
+    and a hardcoded set would have left them out silently, since nothing would raise.
+
+    "Newest" is the alphabetically last id, which is exact while a family pins exactly one
+    release -- every family here does. The day one pins two, its chronology has to be
+    declared somewhere (site.py's TARGET_ORDER is where this repo already declares that
+    fact) rather than guessed from a string sort that puts v2.0.10 before v2.0.2.
+    """
+    families: dict = collections.defaultdict(list)
+    for target in sorted(software):
+        families[software[target]].append(target)
+    keep = set()
+    for members in families.values():
+        keep.update(t for t in members if version.get(t) in MOVING_VERSIONS)
+        # A family is never reduced to its moving stream alone, nor to its tag alone:
+        # for qMRLab both are current and the benchmark reports both.
+        released = [t for t in members if version.get(t) not in MOVING_VERSIONS]
+        keep.update(released[-1:])
+    return keep
+
+
+def _is_cross_software(a: str, b: str, *, reference, cross: set, software: dict) -> bool:
+    """Whether this pair is the reference against another family's current target.
+
+    The one question that decides whether a pair carries a scatter, and it is asked here
+    rather than in compare.py because it is about the CATALOG, not about two arrays: which
+    target is the reference, which family each side belongs to, and which target of that
+    family is current. Every other pair -- same family, or an older version of another --
+    is deliberately left without one: the histogram is the heaviest thing in results.json,
+    the version story is already told by five other tabs, and a file every visitor fetches
+    is not the place to ship a picture nobody is shown.
+    """
+    if reference is None or reference not in (a, b):
+        return False
+    other = b if a == reference else a
+    # Membership of the current-target set is the WHOLE test; the families are
+    # deliberately NOT required to differ. qmrlab@master vs qmrlab@v3.0.0 is same-family,
+    # but site.py draws it on the cross-software tab -- it is qMRLab's moving stream
+    # against its newest release -- so excluding it left 23 of 59 drawn rows carrying a
+    # statistic and no picture. A row whose neighbours all have plots and which has none
+    # reads as a rendering failure, and it is in fact the row most likely to move between
+    # runs, so it is the one a reader most wants to see.
+    return other in cross
 
 
 def _comparison_selection(
@@ -235,6 +298,12 @@ def analyze(
     # two sources of truth).
     software = {r["target"]: r["software"] for r in records if r["software"]}
     software.update({tid: spec.software for tid, spec in targets.items()})
+    # Same two sources and the same precedence, for the same reason: whether a target is
+    # on a moving stream or a pinned tag decides whether it is its family's current one,
+    # and target.yml owns that fact.
+    version = {r["target"]: r["version"] for r in records if r["version"]}
+    version.update({tid: spec.version for tid, spec in targets.items()})
+    cross = _latest_of_each_software(software, version)
 
     comparisons: dict = collections.defaultdict(dict)
     for model_id, by_map in canonical.items():
@@ -282,9 +351,17 @@ def analyze(
                 # medians are not known until compare_maps has taken them over this very
                 # selection. So the physical range narrows the selection and the
                 # normalised range narrows the normalised values inside.
+                #
+                # The scatter is built by compare_maps, from the very arrays it measured
+                # -- never here, beside it. Two implementations of one selection drift,
+                # and the visible failure is a picture that contradicts the statistic
+                # printed beneath it, which the reader resolves in the picture's favour.
                 compared = compare_maps(
                     by_target[a], by_target[b], selection,
                     scale_free=scale_free, scale_free_range=spec.scale_free_range,
+                    scatter=_is_cross_software(
+                        a, b, reference=reference, cross=cross, software=software
+                    ),
                 )
                 row = {
                     "a": a, "b": b,
@@ -339,6 +416,30 @@ def analyze(
     }
 
 
+
+def _dump(doc: dict) -> str:
+    """results.json, indented for review but with each scatter cell on one line.
+
+    Every visitor to the site fetches this file, and `json.dumps(indent=2)` spends five
+    indented lines and ~93 bytes on each [ix, iy, n] triple whose values occupy about 13.
+    That was 70% of the scatter's entire cost: pretty-printing the histogram, not storing
+    it. Collapsing only the cell rows takes the growth from +24.7% to +7.3% and loses
+    nothing -- a coarser bin count buys less and costs a coarser picture.
+
+    Done as a post-pass over the indented text rather than a custom encoder because the
+    rest of the file's shape is unchanged, and because it stays byte-reproducible: the
+    substitution is driven by the same sorted dump every time.
+    """
+    text = json.dumps(doc, indent=2, sort_keys=True)
+    # Matches exactly the exploded triples the encoder writes -- three integers, each on
+    # its own line, inside a list. Anchored on integers so no float array can be caught.
+    return re.sub(
+        r"\[\s*\n\s*(-?\d+),\s*\n\s*(-?\d+),\s*\n\s*(-?\d+)\s*\n\s*\]",
+        r"[\1, \2, \3]",
+        text,
+    )
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--results-dir", required=True)
@@ -350,7 +451,7 @@ def main(argv=None) -> int:
     doc = analyze(args.results_dir, args.root, reference=args.reference)
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(doc, indent=2, sort_keys=True))
+    out.write_text(_dump(doc))
     print(f"wrote {out} ({len(doc['records'])} records)")
     return 0
 

@@ -23,14 +23,14 @@ def _write_target(root, target_id, *, models, lane="rust", **extra):
 
 
 def _target(results, target_id, values, unit="s", model="vfa_t1", *,
-            name="T1", software="x"):
+            name="T1", software="x", version="1"):
     """Write one adapter's artifact tree: one map plus its record."""
     d = results / target_id
     (d / "maps" / model).mkdir(parents=True, exist_ok=True)
     (d / "records").mkdir(parents=True, exist_ok=True)
     write_nifti(d / "maps" / model / f"{name}.nii.gz", values, shape=(len(values),))
     (d / "records" / f"{model}.json").write_text(json.dumps({
-        "target": target_id, "software": software, "version": "1", "model": model,
+        "target": target_id, "software": software, "version": version, "model": model,
         "status": "ok", "environment": {},
         "timing": {"repeats": 1, "fit_seconds": [1.0], "n_voxels_fitted": len(values)},
         "maps": [{"name": name, "unit": unit, "path": f"maps/{model}/{name}.nii.gz"}],
@@ -787,3 +787,136 @@ def test_the_scale_free_range_never_reaches_a_map_with_a_physical_unit(tmp_path)
     assert pair["scale_free_range"] is None
     assert pair["n"] == 3
     assert pair["n_out_of_range"] == 0
+
+
+# --- the scatter histogram, on the cross-software pairs only (spec §7) ---------------
+
+def _pair_between(doc, a, b, *, model="vfa_t1", name="T1"):
+    return next(p for p in doc["comparisons"][model][name] if (p["a"], p["b"]) == (a, b))
+
+
+def test_only_the_reference_against_another_family_carries_a_scatter(tmp_path):
+    """The histogram is the heaviest thing in results.json and the version story is
+    already told by the five other tabs, so exactly the pairs the cross-software tab
+    draws get a picture and nothing else does."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "qmrlab@v3", [1.0, 2.0, 3.0], software="qmrlab", version="3")
+    _target(results, "qmrlab@v2", [1.0, 2.0, 3.0], software="qmrlab", version="2")
+    _target(results, "qmrust@main", [1.0, 2.0, 3.0], software="qmrust", version="main")
+    _mask(root, 3)
+
+    doc = analyze(results, root, models_root=ROOT, reference="qmrlab@v3")
+
+    assert _pair_between(doc, "qmrlab@v3", "qmrust@main")["scatter"] is not None
+    # Same family: this is the version axis, and it has five tabs of its own.
+    assert "scatter" not in _pair_between(doc, "qmrlab@v2", "qmrlab@v3")
+    # Cross-family, but the reference is on neither side, so nothing draws it.
+    assert "scatter" not in _pair_between(doc, "qmrlab@v2", "qmrust@main")
+
+
+def test_an_older_release_of_another_family_gets_no_scatter(tmp_path):
+    """Only each family's CURRENT target is drawn. An old QUIT release would double the
+    heaviest data in the file to answer a question the version tabs already answer."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "qmrlab@v3", [1.0, 2.0, 3.0], software="qmrlab", version="3")
+    _target(results, "quit@v2.0", [1.0, 2.0, 3.0], software="quit", version="2.0")
+    _target(results, "quit@v3.4", [1.0, 2.0, 3.0], software="quit", version="3.4")
+    _mask(root, 3)
+
+    doc = analyze(results, root, models_root=ROOT, reference="qmrlab@v3")
+
+    assert _pair_between(doc, "qmrlab@v3", "quit@v3.4")["scatter"] is not None
+    assert "scatter" not in _pair_between(doc, "qmrlab@v3", "quit@v2.0")
+
+
+def test_a_moving_stream_and_the_newest_tag_are_both_current(tmp_path):
+    """A family is never reduced to one of the two: qMRLab publishes v3.0.0 and master
+    and the benchmark reports both, so a branch beside a tag is two current targets
+    rather than a choice between them."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "qmrlab@v3", [1.0, 2.0, 3.0], software="qmrlab", version="3")
+    _target(results, "quit@main", [1.0, 2.0, 3.0], software="quit", version="main")
+    _target(results, "quit@v9", [1.0, 2.0, 3.0], software="quit", version="9")
+    _mask(root, 3)
+
+    doc = analyze(results, root, models_root=ROOT, reference="qmrlab@v3")
+
+    assert _pair_between(doc, "qmrlab@v3", "quit@main")["scatter"] is not None
+    assert _pair_between(doc, "qmrlab@v3", "quit@v9")["scatter"] is not None
+
+
+def test_the_scatter_describes_exactly_the_voxels_the_statistics_describe(tmp_path):
+    """models/vfa_t1.yml bounds T1 to [0, 10] s for the comparison, so a diverged voxel
+    leaves the selection before either the CCC or the picture sees it. The picture has to
+    lose it too — a plot showing a voxel the statistic excluded is the two disagreeing in
+    the one direction a reader cannot check."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    values = list(np.linspace(1.0, 3.0, 200)) + [50.0]
+    _target(results, "qmrlab@v3", values, software="qmrlab", version="3")
+    _target(results, "qmrust@main", values, software="qmrust", version="main")
+    _mask(root, 201)
+
+    doc = analyze(results, root, models_root=ROOT, reference="qmrlab@v3")
+    pair = _pair_between(doc, "qmrlab@v3", "qmrust@main")
+    scatter = pair["scatter"]
+
+    assert pair["n"] == 200 and pair["n_out_of_range"] == 1
+    assert scatter["n"] + scatter["n_clipped"] == pair["n"]
+    assert sum(n for _, _, n in scatter["cells"]) == scatter["n"]
+    # 50 s is outside the declared range, so it is outside the picture's axes as well.
+    assert scatter["x_range"][1] < 4.0
+
+
+def test_a_free_amplitude_is_normalised_in_the_picture_as_well_as_in_the_numbers(
+        tmp_path):
+    """vfa_t1/M0 is 'au': each software chose its own amplitude and the comparison
+    divides that out. A scatter drawn in raw amplitudes would put a perfect agreement
+    1024x off the diagonal while the row beneath it printed ccc = 1."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    values = list(np.linspace(1.0, 2.0, 200))
+    # 1024 and not 1000, so the float32 map on disk holds the scaled values exactly and
+    # this test is about the normalisation rather than about rounding.
+    _target(results, "qmrlab@v3", values, unit="au", name="M0",
+            software="qmrlab", version="3")
+    _target(results, "qmrust@main", [1024.0 * v for v in values], unit="au", name="M0",
+            software="qmrust", version="main")
+    _mask(root, 200)
+
+    doc = analyze(results, root, models_root=ROOT, reference="qmrlab@v3")
+    pair = _pair_between(doc, "qmrlab@v3", "qmrust@main", name="M0")
+    scatter = pair["scatter"]
+
+    assert pair["scale_free"] is True
+    assert pair["ccc"] == 1.0
+    assert scatter["x_range"][0] < 1.0 < scatter["x_range"][1] < 2.0
+    assert all(ix == iy for ix, iy, _ in scatter["cells"])
+
+
+def test_an_undrawn_pair_carries_no_scatter_key_at_all(tmp_path):
+    """Absence, not null: null is what a pair that WAS asked for and could not be drawn
+    reports, and the two must not read as the same thing.
+
+    The undrawn case is a pair that does not involve the reference. Every pair that IS
+    drawn on the cross-software tab now carries a scatter, including the reference against
+    its own family's moving stream -- a drawn row with a statistic and no picture reads as
+    a rendering failure, so the two sets are kept identical on purpose.
+    """
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 2.0, 3.0])
+    _target(results, "b@1", [1.0, 2.0, 3.0])
+    _target(results, "c@1", [1.0, 2.0, 3.0])
+    _mask(root, 3)
+
+    doc = analyze(results, root, models_root=ROOT, reference="a@1")
+    pairs = doc["comparisons"]["vfa_t1"]["T1"]
+
+    without_reference = [p for p in pairs if "a@1" not in (p["a"], p["b"])]
+    assert without_reference, "expected at least one pair not involving the reference"
+    for pair in without_reference:
+        assert "scatter" not in pair
+
+    # The positive case is deliberately NOT asserted here: this fixture ships no
+    # targets/ catalog, so no target is any family's current one and nothing qualifies.
+    # That is the safe direction to fail in -- an unknown catalog yields no pictures
+    # rather than pictures of the wrong pairs -- and the drawn-pair case is covered
+    # against the real published run instead.
