@@ -99,6 +99,22 @@ td.txt b{color:var(--ink)}
 .note{background:var(--panel);border-left:3px solid var(--warn);padding:.6rem .85rem;
 border-radius:0 6px 6px 0;font-size:.86rem;color:var(--ink2);margin:0 0 1.1rem;max-width:76ch}
 .note b{color:var(--ink)}
+/* Orientation, not data. Every tab opens with one of these, so it has to read as a
+   different kind of object from the chart beneath it -- panel fill and a full rule,
+   where .note is a warning bar and .tile is a figure card. The figures sit between two
+   hairlines because the block is a lede: the sentence, then the count, then the catch. */
+.lede{background:var(--panel);border:1px solid var(--rule);border-radius:8px;
+padding:.8rem 1rem;margin:0 0 1.4rem;max-width:84ch}
+.lede p{margin:0;color:var(--ink2);font-size:.9rem;max-width:78ch}
+.lede p+p{margin-top:.5rem}
+.lede b,.lede code{color:var(--ink)}
+.lede .figs{display:flex;flex-wrap:wrap;gap:.3rem 1.15rem;margin:.6rem 0;padding:.5rem 0;
+border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);max-width:none}
+.lede .figs span{font-size:.8rem;color:var(--ink2);white-space:nowrap}
+.lede .figs b{font-size:1.05rem;font-weight:650;margin-right:.3rem;
+font-variant-numeric:tabular-nums}
+.lede .figs i{display:inline-block;width:9px;height:9px;border-radius:2px;
+margin-right:.35rem;vertical-align:-1px}
 select{font:inherit;font-size:.86rem;padding:.25rem .4rem;background:var(--panel);
 color:var(--ink);border:1px solid var(--rule);border-radius:5px}
 .ctl{display:flex;gap:.7rem;align-items:center;margin-bottom:.9rem;flex-wrap:wrap}
@@ -530,73 +546,109 @@ def _matrices(doc):
 
 # ---------------------------------------------------------------- values
 
-def _ranges(doc):
-    out, keys = [], []
+def _value_rows(doc):
+    """(model, map, [(target, stats, unit)]) for every chart the Values tab draws.
+
+    Shared with that tab's summary rather than counted a second time there: a summary
+    that selected its own rows would be free to disagree with the charts underneath it,
+    and a headline count that contradicts the thing it introduces is worse than no
+    headline at all.
+    """
+    out = []
     for model in _models(doc):
-        for mp in _maps_of(doc, model):
+        for map_name in _maps_of(doc, model):
             rows = []
             for r in doc["records"]:
                 if r["model"] != model or r["status"] != "ok":
                     continue
                 for m in r["maps"]:
-                    if m["name"] == mp and m["stats"].get("median") is not None:
+                    if m["name"] == map_name and m["stats"].get("median") is not None:
                         rows.append((r["target"], m["stats"], m["stats_unit"]))
             if not rows:
                 continue
-            keys.append(f'<option value="{_e(model + "/" + mp)}">{_e(model)} / {_e(mp)}</option>')
             order = {t: i for i, t in enumerate(_ordered([t for t, _, _ in rows]))}
             rows.sort(key=lambda x: order[x[0]])
-            lo = min(s["p05"] for _, s, _ in rows)
-            hi = max(s["p95"] for _, s, _ in rows)
-            span = (hi - lo) or 1.0
-            w, rh = 620, 26
-            # margin 14, because these labels are drawn 8px inside the gutter below.
-            pad = _gutter([_short(t) for t, _, _ in rows], margin=14)
-            svg = [f'<svg width="{pad + w + 60}" height="{len(rows) * rh + 34}" role="img">']
-            outlier = False
-            for i, (t, s, unit) in enumerate(rows):
-                y = i * rh + 20
-                sx = lambda v: pad + (v - lo) / span * w  # noqa: E731
-                x0, x1 = max(pad, sx(s["p05"])), min(pad + w, sx(s["p95"]))
-                svg.append(f'<text x="{pad - 8}" y="{y + 5}" text-anchor="end">{_e(_short(t))}</text>')
-                tip = (f"{_short(t)} — median {s['median']:.6g} {unit} · "
-                       f"p05 {s['p05']:.4g} · p95 {s['p95']:.4g} · n {s['n']}")
-                svg.append(f'<g data-tip="{_e(tip)}">'
-                           f'<rect x="{x0}" y="{y - 7}" width="{max(2, x1 - x0)}" height="14" '
-                           f'rx="4" fill="var(--s1)" opacity=".38"/>'
-                           f'<circle cx="{max(pad, min(pad + w, sx(s["median"])))}" cy="{y}" '
-                           f'r="4.5" fill="var(--s1)"/></g>')
-                if s["mean"] is not None and abs(s["mean"] - s["median"]) > 10 * abs(s["median"]):
-                    outlier = True
-                    svg.append(f'<text x="{pad + w + 8}" y="{y + 4}" '
-                               f'style="fill:var(--warn);font-weight:600">skewed</text>')
-            svg.append(f'<text x="{pad}" y="{len(rows) * rh + 26}">{lo:.4g}</text>'
-                       f'<text x="{pad + w}" y="{len(rows) * rh + 26}" text-anchor="end">{hi:.4g}</text>'
-                       "</svg>")
-            cap = (f"<b>{_e(model)} / {_e(mp)}</b> — box spans p05&ndash;p95, dot is the median, "
-                   f"in {_e(rows[0][2])}. Distributions are summarised from stored quantiles; "
-                   "raw voxel histograms are not published.")
-            if outlier:
-                cap += ('  <span class="outlier-flag" style="color:var(--warn);font-weight:600">'
-                        "&#9888; outlier-dominated mean</span> — rows marked <i>skewed</i> have a "
-                        "mean orders of magnitude from their median, because a few extreme voxels "
-                        "dominate it. The median is the figure to read.")
-            out.append(f'<div data-group="rng" data-key="{_e(model + "/" + mp)}" hidden>'
-                       f'<p class="sub" style="margin:.2rem 0 .5rem">{cap}</p>'
-                       f'<div class="scroll">{"".join(svg)}</div></div>')
+            out.append((model, map_name, rows))
+    return out
+
+
+def _skewed(stats):
+    """A mean orders of magnitude from its median, i.e. a few voxels dominating it.
+
+    One definition, used by the mark on the chart and by the count in the tab summary,
+    so the summary can never say ten rows are skewed above a chart that marks nine.
+    """
+    mean, median = stats.get("mean"), stats.get("median")
+    return (mean is not None and median is not None
+            and abs(mean - median) > 10 * abs(median))
+
+
+def _ranges(doc):
+    out, keys = [], []
+    for model, mp, rows in _value_rows(doc):
+        keys.append(f'<option value="{_e(model + "/" + mp)}">{_e(model)} / {_e(mp)}</option>')
+        lo = min(s["p05"] for _, s, _ in rows)
+        hi = max(s["p95"] for _, s, _ in rows)
+        span = (hi - lo) or 1.0
+        w, rh = 620, 26
+        # margin 14, because these labels are drawn 8px inside the gutter below.
+        pad = _gutter([_short(t) for t, _, _ in rows], margin=14)
+        svg = [f'<svg width="{pad + w + 60}" height="{len(rows) * rh + 34}" role="img">']
+        outlier = False
+        for i, (t, s, unit) in enumerate(rows):
+            y = i * rh + 20
+            sx = lambda v: pad + (v - lo) / span * w  # noqa: E731
+            x0, x1 = max(pad, sx(s["p05"])), min(pad + w, sx(s["p95"]))
+            svg.append(f'<text x="{pad - 8}" y="{y + 5}" text-anchor="end">{_e(_short(t))}</text>')
+            tip = (f"{_short(t)} — median {s['median']:.6g} {unit} · "
+                   f"p05 {s['p05']:.4g} · p95 {s['p95']:.4g} · n {s['n']}")
+            svg.append(f'<g data-tip="{_e(tip)}">'
+                       f'<rect x="{x0}" y="{y - 7}" width="{max(2, x1 - x0)}" height="14" '
+                       f'rx="4" fill="var(--s1)" opacity=".38"/>'
+                       f'<circle cx="{max(pad, min(pad + w, sx(s["median"])))}" cy="{y}" '
+                       f'r="4.5" fill="var(--s1)"/></g>')
+            if _skewed(s):
+                outlier = True
+                svg.append(f'<text x="{pad + w + 8}" y="{y + 4}" '
+                           f'style="fill:var(--warn);font-weight:600">skewed</text>')
+        svg.append(f'<text x="{pad}" y="{len(rows) * rh + 26}">{lo:.4g}</text>'
+                   f'<text x="{pad + w}" y="{len(rows) * rh + 26}" text-anchor="end">{hi:.4g}</text>'
+                   "</svg>")
+        cap = (f"<b>{_e(model)} / {_e(mp)}</b> — box spans p05&ndash;p95, dot is the median, "
+               f"in {_e(rows[0][2])}. Distributions are summarised from stored quantiles; "
+               "raw voxel histograms are not published.")
+        if outlier:
+            cap += ('  <span class="outlier-flag" style="color:var(--warn);font-weight:600">'
+                    "&#9888; outlier-dominated mean</span> — rows marked <i>skewed</i> have a "
+                    "mean orders of magnitude from their median, because a few extreme voxels "
+                    "dominate it. The median is the figure to read.")
+        out.append(f'<div data-group="rng" data-key="{_e(model + "/" + mp)}" hidden>'
+                   f'<p class="sub" style="margin:.2rem 0 .5rem">{cap}</p>'
+                   f'<div class="scroll">{"".join(svg)}</div></div>')
     return ('<div class="ctl"><label>Map <select data-controls="rng">' + "".join(keys)
             + "</select></label></div>" + "".join(out))
 
 
 # ---------------------------------------------------------------- timing
 
-def _timing(doc):
+def _timing_rows(doc):
+    """(model, target, median seconds, MATLAB release) for every bar the Timing tab draws.
+
+    Shared with that tab's summary for the reason _value_rows is: the fastest and slowest
+    figures in the lede have to be the fastest and slowest bars in the chart, and the only
+    way to guarantee that is for both to read the same list.
+    """
     rows = []
     for r in doc["records"]:
-        s = (r.get("timing") or {}).get("fit_seconds") or []
-        if r["status"] == "ok" and s:
-            rows.append((r["model"], r["target"], statistics.median(s),
+        seconds = (r.get("timing") or {}).get("fit_seconds") or []
+        if r["status"] == "ok" and seconds:
+            rows.append((r["model"], r["target"], statistics.median(seconds),
                          r["environment"].get("matlab_release") or "—"))
+    return rows
+
+
+def _timing(doc):
+    rows = _timing_rows(doc)
     if not rows:
         return "<p>No timing data.</p>"
     lo = min(v for _, _, v, _ in rows)
@@ -672,8 +724,7 @@ def _tables(doc):
                     f"<td><code>{_e((e.get('harness_commit') or '—')[:10])}</code></td>"
                     f"<td>{_e(e.get('run_started_utc') or '—')}</td></tr>")
     return (
-        '<p class="sub">The full numbers, and the accessible fallback for every chart above. '
-        'Machine-readable: <a href="data/results.json">results.json</a> · '
+        '<p class="sub">Machine-readable: <a href="data/results.json">results.json</a> · '
         '<a href="data/history.jsonl">history.jsonl</a> (per-run digests).</p>'
         '<div class="scroll"><table><caption>Masked statistics in each model\'s canonical unit. '
         "The hash is over the unit the software produced, so it will not match across a unit "
@@ -1113,11 +1164,11 @@ def _cross_software(doc, dropped):
         cross = _ordered(set(cross) | {ref})
     rows = _cross_rows(doc, cross)
     return (
-        '<p class="sub">The latest of each software, against the reference. Older qMRLab '
-        "releases are the other five tabs' subject and are left out here: this tab asks "
-        "whether independent implementations agree today, not how one of them changed."
-        f" Showing {_e(', '.join(_short(t) for t in cross))}.</p>"
-        '<h2 style="font-size:1rem;margin:.4rem 0 .3rem">Coverage, and holes</h2>'
+        # The paragraph that used to open this tab said what the lede's first two
+        # sentences say, and said it after the reader had already scrolled past nothing:
+        # two paragraphs making the same point is what "impossible to parse" is made of.
+        _lede_cross(doc, cross, rows)
+        + '<h2 style="font-size:1rem;margin:.4rem 0 .3rem">Coverage, and holes</h2>'
         + _coverage(doc, cross)
         + '<h2 style="font-size:1rem;margin:.4rem 0 .3rem">Agreement with the reference'
           "</h2>"
@@ -1132,6 +1183,299 @@ def _cross_software(doc, dropped):
         + _STATS_HEAD
         + "".join(_stats_rows([r for r in doc["records"] if r["target"] in cross]))
         + "</table></div>")
+
+
+# ---------------------------------------------------------------- tab summaries
+
+# Every tab used to open straight into a dense matrix or a wide table, with the
+# explanation absent or buried in a caption, so a reader had to reverse-engineer what
+# they were looking at before they could read it. Each tab now opens with a lede: the
+# question it answers, the figures that answer it today, and the misreading it invites.
+#
+# The six live together rather than beside the charts they introduce because they have
+# to read as one voice; six blocks written months apart beside six different charts is
+# how a page ends up explaining the same word two ways.
+#
+# Every figure below is COUNTED from the document being rendered -- the narrowed history
+# doc for the five version tabs, the whole run for the cross-software tab -- and several
+# of them are counted by the same helper that draws the thing they describe. A
+# transcribed number is the one failure that matters here: a summary claiming seventy
+# pairs agree above a table showing forty-three is worse than no summary, and this page
+# is published.
+
+
+def _lede(paragraphs, figures):
+    """One tab's orientation block: the question, then the figures, then the catch.
+
+    The order is fixed here rather than left to each caller. The first paragraph is the
+    question the tab answers; the figures follow it; everything after them is what to
+    read first and what readers get wrong. A tab that opened with its caveat, or that put
+    its numbers last, is back to being a chart the reader has to decode before reading,
+    which is the complaint this block exists to answer.
+
+    `paragraphs` carry markup their callers build, and every value interpolated into one
+    is escaped there. `figures` are (value, label, colour-or-None); a colour is a status
+    swatch and always ships beside its own label, never as colour alone.
+    """
+    cells = []
+    for value, label, colour in figures:
+        swatch = "" if colour is None else f'<i style="background:{colour}"></i>'
+        cells.append(f"<span>{swatch}<b>{_e(value)}</b> {_e(label)}</span>")
+    rest = "".join(f"<p>{p}</p>" for p in paragraphs[1:])
+    return ('<div class="lede">'
+            f"<p>{paragraphs[0]}</p>"
+            f'<p class="figs">{"".join(cells)}</p>'
+            f"{rest}</div>")
+
+
+def _lede_overview(history, dropped):
+    """Counted over the grid the tab actually draws, which is `history`, not the run.
+
+    The whole run is what the tiles under this block count, and the two disagree whenever
+    a family is filtered out -- so the last paragraph says which is which. A summary that
+    quietly counted 15 targets above five tiles counting 17 would be the second number on
+    this page a reader has no way to check.
+    """
+    targets = {r["target"] for r in history["records"]}
+    models = _models(history)
+    declared = {(r["target"], r["model"]) for r in history["records"]}
+    ran = sum(1 for r in history["records"] if r["status"] == "ok")
+    failed = sum(1 for r in history["records"] if r["status"] == "failed")
+    gone = sum(1 for r in history["records"] if r["status"] == "missing")
+    holes = len(targets) * len(models) - len(declared)
+
+    figures = [(f"{len(targets)} × {len(models)}", "targets × models", None),
+               (f"{ran:,}", "produced maps", None),
+               (f"{failed:,}", "failed", None)]
+    if gone:
+        figures.append((f"{gone:,}", "never came back", None))
+    figures.append((f"{holes:,}", "not applicable", None))
+
+    paragraphs = [
+        "Did every fit this benchmark declares actually run? The grid below is one "
+        "target per row, one model per column, and one fit per cell.",
+        "Every cell that is not a tick prints its reason in <i>What did not run</i>, "
+        "under the grid, rather than in a tooltip — read that list first."
+        if failed or gone else
+        "Nothing failed in this view, so the grid is ticks and declared holes only.",
+        "The most common misreading is the muted <i>not applicable</i> cells. A target "
+        "declares the models it supports in its <code>target.yml</code>, and omission is "
+        "the only way this repo declares a gap, so those cells are a scope decision and "
+        "not a fit that broke.",
+    ]
+    if dropped:
+        paragraphs.append(
+            "The tiles that follow count the whole run; the grid under them is version "
+            "history only, which is why it holds fewer targets. The note between them "
+            "names what that leaves out.")
+    return _lede(paragraphs, figures)
+
+
+def _lede_cross(doc, cross, rows):
+    families, states = _coverage_states(doc, cross)
+    models = _models(doc)
+    holes = sum(1 for m in models for f in families if states[(m, f)] == "hole")
+    counts = {}
+    for row in rows:
+        pair = row["pair"]
+        where = f"{row['model']}/{row['map']} {pair.get('a')} vs {pair.get('b')}"
+        colour = _flag_of(pair, where)[0]
+        counts[colour] = counts.get(colour, 0) + 1
+
+    figures = [
+        (f"{len(families):,}", "software families", None),
+        (f"{len(models):,}", "models", None),
+        (f"{len(rows):,}", "comparisons", None),
+        (f"{counts.get('green', 0):,}", "agree within tolerance", "var(--good)"),
+        (f"{counts.get('amber', 0):,}", "differ for a declared reason", "var(--warn)"),
+        (f"{counts.get('red', 0):,}", "flagged", "var(--crit)"),
+    ]
+    if counts.get(None):
+        # An unclassified pair is not a passing one, so it is never folded into green.
+        figures.append((f"{counts[None]:,}", "not classified", None))
+
+    ref = doc.get("reference")
+    opening = "Do independent implementations of the same model agree today?"
+    if rows and ref:
+        opening += (" Each row below pairs the current version of one software with the "
+                    f"reference <code>{_e(_short(ref))}</code>, on one map.")
+    opening += (" How qMRLab itself changed over time is the other five tabs' subject, "
+                "not this one.")
+
+    second = "Read the coverage table first: it says which family attempts which "
+    second += (f"model at all, and its {holes} <i>declared hole</i> cells are gaps a "
+               "family declared by leaving that model out of its "
+               "<code>target.yml</code>, not runs that broke." if holes else
+               "model at all. Every family here declares every model, so nothing "
+               "on it is a hole.")
+    if cross:
+        second += (" Compared today: "
+                   + _e(", ".join(_short(t) for t in _ordered(cross))) + ".")
+
+    third = ("The most common misreading is amber. It means the two implementations were "
+             "never expected to produce the same number — a different estimator, a "
+             "different convention, a different unit — and not that one of them nearly "
+             "failed. Red is the colour to read as a finding.")
+    return _lede([opening, second, third], figures)
+
+
+def _lede_agree(doc):
+    equivalence = doc.get("equivalence", {})
+    identical = 0
+    charts = 0
+    for by_map in equivalence.values():
+        for classes in by_map.values():
+            if not classes:
+                continue
+            charts += 1
+            for group in classes.values():
+                # Pairs, not classes: "301 pairs are byte-identical" is a claim about the
+                # matrix under the bands, where a reader counts pairs and not hashes.
+                identical += len(group) * (len(group) - 1) // 2
+    pairs = sum(len(ps) for by_map in doc.get("comparisons", {}).values()
+                for ps in by_map.values())
+    targets = {r["target"] for r in doc["records"]}
+
+    figures = [(f"{len(targets):,}", "targets", None),
+               (f"{charts:,}", "maps", None),
+               (f"{pairs:,}", "pairs measured", None),
+               (f"{identical:,}", "pairs byte-identical", None)]
+
+    if not charts and not pairs:
+        # A summary that promised bands and a matrix over an empty tab would be the
+        # orientation block causing the confusion it exists to remove.
+        return _lede([
+            "Which of these versions produced exactly the same map, and how far apart "
+            "are the ones that did not? Nothing in this view was compared, so there is "
+            "nothing here to read.",
+            "Both the bands and the matrix come from the analyze step, which recorded "
+            "no equivalence class and no pair for these targets.",
+            "The most common misreading is an empty tab read as disagreement. No two "
+            "maps were compared at all.",
+        ], figures)
+
+    iterative = [m for m in _models(doc) if m in ITERATIVE]
+    catch = ("The most common misreading is reading a colour change as a change in "
+             "qMRLab. "
+             + ("The one iterative fit here (" if len(iterative) == 1
+                else "The iterative fits here (")
+             + _e(", ".join(iterative)) + ") "
+             + ("shifts" if len(iterative) == 1 else "shift")
+             + " their converged optimum by around 1e-7 between MATLAB builds, and "
+             "<code>master</code> tracks the latest release while the tags are pinned. "
+             "Check the MATLAB column on the Timing tab before concluding the software "
+             "changed." if iterative else
+             "The most common misreading is reading <i>unique</i> as far away. It means "
+             "only that no other version produced these exact bytes; the matrix below is "
+             "where you find out how far apart they actually are.")
+    return _lede([
+        "Which of these versions produced exactly the same map, and how far apart are "
+        "the ones that did not? The bands are hash identity: two cells share a colour "
+        "when their maps are byte-identical, and the colour marks that sharing rather "
+        "than naming which class it is.",
+        "Byte-identical is exact — one voxel differing in its last bit makes both maps "
+        "unique — so read the bands for what is shared at all, then the matrix below, "
+        "which shades every pair by the fraction of voxels agreeing within 1%.",
+        catch,
+    ], figures)
+
+
+def _lede_values(doc):
+    charts = _value_rows(doc)
+    rows = sum(len(r) for _, _, r in charts)
+    skewed = sum(1 for _, _, r in charts for _t, s, _u in r if _skewed(s))
+    units = {unit for _, _, r in charts for _t, _s, unit in r}
+
+    figures = [(f"{len(charts):,}", "maps", None),
+               (f"{rows:,}", "target rows", None),
+               (f"{len(units):,}", "units", None),
+               (f"{skewed:,}", "rows skewed", None)]
+
+    if not charts:
+        return _lede([
+            "What values did each version actually produce? No map in this view "
+            "published the quantiles these charts are drawn from, so there is nothing "
+            "to chart.",
+            "A row appears here only for a fit that succeeded and stored a median. The "
+            "Overview tab is where the fits that did not are listed.",
+            "The most common misreading is an empty tab read as a run with no output. "
+            "What is absent here is the stored summary statistics, not necessarily the "
+            "maps themselves.",
+        ], figures)
+
+    catch = (f"The most common misreading is the mean. On {skewed} "
+             + ("row" if skewed == 1 else "rows")
+             + " here a handful of extreme voxels drags it orders of magnitude from the "
+             "median; those rows are marked <i>skewed</i>, and the median is the figure "
+             "to read." if skewed else
+             "The most common misreading is a wide box read as disagreement. It is the "
+             "spread of voxels inside one map, which is anatomy, not the spread between "
+             "versions.")
+    return _lede([
+        "What values did each version actually produce? One chart per model and map: the "
+        "box spans p05 to p95, the dot is the median, and the unit is that model's "
+        "canonical one.",
+        "Compare down a chart, never across two. Each chart is scaled to its own map's "
+        "range, so two of them share an axis only by coincidence.",
+        catch,
+    ], figures)
+
+
+def _lede_timing(doc):
+    rows = _timing_rows(doc)
+    if not rows:
+        return _lede([
+            "How long did each fit take on the runner that ran it? No fit in this view "
+            "recorded a time, so there is nothing to chart.",
+            "A fit records a time only when it succeeded, so read the Overview tab "
+            "first: an empty chart here is that tab's failures, seen from the other end.",
+            "The most common misreading is an empty chart read as a run that took no "
+            "time. Nothing here was measured, which is a different fact.",
+        ], [("0", "fits timed", None)])
+
+    fast = min(rows, key=lambda r: r[2])
+    slow = max(rows, key=lambda r: r[2])
+    releases = sorted({rel for _m, _t, _v, rel in rows if rel != "—"})
+    figures = [(f"{len(rows):,}", "fits timed", None),
+               (f"{fast[2]:.3g} s", "fastest", None),
+               (f"{slow[2]:.3g} s", "slowest", None)]
+    if releases:
+        figures.append((f"{len(releases):,}", "MATLAB builds", None))
+
+    return _lede([
+        "How long did each fit take on the runner that ran it? One bar per model and "
+        "target, the median of that cell's repeats, on a logarithmic axis.",
+        f"The fastest is {_e(fast[0])} on {_e(_short(fast[1]))} at {fast[2]:.3g} s; the "
+        f"slowest is {_e(slow[0])} on {_e(_short(slow[1]))} at {slow[2]:.3g} s. The axis "
+        "is logarithmic because of that spread, so a bar twice as long is not twice the "
+        "time.",
+        "The most common misreading is a version-to-version difference read as a "
+        "speed-up. These are shared runners with few repeats, and the MATLAB build "
+        "changes down the axis. The note below is the harder limit: the MATLAB and Rust "
+        "lanes do not time the same thing at all.",
+    ], figures)
+
+
+def _lede_data(doc):
+    records = doc["records"]
+    rows = sum(len(r["maps"]) for r in records)
+    targets = {r["target"] for r in records}
+    units = {m["stats_unit"] for r in records for m in r["maps"]}
+    figures = [(f"{rows:,}", "statistic rows", None),
+               (f"{len(targets):,}", "targets", None),
+               (f"{len(_models(doc)):,}", "models", None),
+               (f"{len(units):,}", "units", None)]
+    return _lede([
+        "What is every chart on this page drawn from? These two tables: the statistic "
+        "behind each mark, and the provenance of the run that produced it.",
+        "This is the accessible fallback for the charts — whatever a chart encodes as "
+        "colour or length is here as text — and the two links below are the same data, "
+        "machine-readable.",
+        "The most common misreading is the hash column. <code>voxel_sha256</code> is "
+        "taken over the values a software produced, in the unit and the float width it "
+        "produced them, so two rows that differ in nothing else can still never share a "
+        "hash. Read it down one family's rows and no further.",
+    ], figures)
 
 
 # ---------------------------------------------------------------- page
@@ -1161,16 +1505,19 @@ def render(doc: dict) -> str:
     nav = "".join(
         f'<button data-tab="{k}" aria-selected="{"true" if i == 0 else "false"}">{_e(l)}</button>'
         for i, (k, l) in enumerate(tabs))
+    # Each lede is built from the doc its own tab renders: `history` for the five
+    # version tabs, whose charts never show the families it drops, and the whole run for
+    # the cross-software tab and the tiles, which do. Handing every lede `doc` would
+    # publish a summary counting targets its own tab does not draw.
     panes = {
-        "overview": _tiles(doc) + filtered + _status_matrix(history),
+        "overview": (_lede_overview(history, dropped) + _tiles(doc) + filtered
+                     + _status_matrix(history)),
         "cross": _cross_software(doc, dropped),
-        "agree": (filtered
-                  + '<p class="sub">Which versions produced identical maps, and how closely any '
-                  "two agree.</p>" + _bands(history) + "<h2>Pairwise agreement</h2>"
-                  + _matrices(history)),
-        "values": filtered + _ranges(history),
-        "timing": filtered + _timing(history),
-        "data": filtered + _tables(history),
+        "agree": (_lede_agree(history) + filtered + _bands(history)
+                  + "<h2>Pairwise agreement</h2>" + _matrices(history)),
+        "values": _lede_values(history) + filtered + _ranges(history),
+        "timing": _lede_timing(history) + filtered + _timing(history),
+        "data": _lede_data(history) + filtered + _tables(history),
     }
     body = "".join(
         f'<section data-pane="{k}"{"" if i == 0 else " hidden"}>{panes[k]}</section>'

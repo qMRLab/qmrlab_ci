@@ -1,8 +1,11 @@
+import collections
+import json
+import pathlib
 import re
 
 import pytest
 
-from harness.site import _ordered, _text_width, render
+from harness.site import _CSS, _ordered, _text_width, render
 
 DOC = {
     "reference": "b@1",
@@ -576,3 +579,226 @@ def test_the_disclosure_names_the_declared_range_and_what_it_removed():
 
     assert "comparison_range" in pane
     assert "mt_ratio / MTR [-100, 100]: 34,087 excluded against sct 7.3" in pane
+
+
+# --- the tab summaries ---------------------------------------------------------------
+#
+# Every tab opens with a lede: the question it answers, the figures that answer it today,
+# and the misreading it invites. The figures are the part that can rot. They are counted
+# from the loaded document, and a summary that says seventy pairs agree above a table
+# showing forty-three is worse than no summary at all -- so every test below recounts the
+# figure from somewhere else: from the rendered table under it where the page draws one,
+# and from the document itself where it does not. Nothing here reads a count back out of
+# the function that produced it.
+
+LIVE = pathlib.Path("/tmp/live.json")
+
+TAB_PANES = ("overview", "cross", "agree", "values", "timing", "data")
+
+SUMMARY_DOCS = ("DOC", "FOUR_STATE_DOC", "THREE_FAMILY", "live")
+
+
+def _summary_doc(name):
+    """The fixtures the summary tests run over, plus the published run when it is here.
+
+    The live document is the only one with a realistic shape -- 17 targets, four
+    families, ten failures, six-order-of-magnitude fit times -- and it is not in the
+    repo, so it cannot be the only thing holding these figures honest. The in-repo
+    fixtures run the same assertions on every machine; the live copy adds the shape.
+    """
+    if name == "live":
+        if not LIVE.exists():
+            pytest.skip(f"no local copy of the published results.json at {LIVE}")
+        return json.loads(LIVE.read_text())
+    return {"DOC": DOC, "FOUR_STATE_DOC": FOUR_STATE_DOC,
+            "THREE_FAMILY": THREE_FAMILY}[name]
+
+
+def _pane(page, name):
+    return re.search(f'<section data-pane="{name}"[^>]*>(.*?)</section>',
+                     page, re.S).group(1)
+
+
+def _lede(pane):
+    return re.search(r'<div class="lede">.*?</div>\s*(?=<)', pane, re.S).group(0)
+
+
+def _figures(pane):
+    """The lede's figure strip as {label: value}, exactly as a reader sees it."""
+    strip = re.search(r'<p class="figs">(.*?)</p>', pane, re.S).group(1)
+    return {label.strip(): value
+            for value, label in re.findall(r"<b>([^<]*)</b>([^<]*)</span>", strip)}
+
+
+def _history_targets(doc):
+    """The targets the five version tabs keep -- worked out here, not imported.
+
+    A restatement rather than a call: a test that asked site.py which targets it kept
+    would move with site.py, and the whole point of these assertions is that the two
+    cannot drift apart quietly.
+    """
+    facets = {}
+    for r in doc["records"]:
+        software, version = r.get("software") or "", r.get("version") or ""
+        if software and version:
+            facets[r["target"]] = software
+        elif r["target"] not in facets:
+            facets[r["target"]] = r["target"].partition("@")[0]
+    keep = {t for t, s in facets.items() if s in ("qmrlab", "qmrust")}
+    return set(facets) if not keep or keep == set(facets) else keep
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_every_tab_opens_with_its_summary(name):
+    """The complaint this answers: every tab opened straight into a dense matrix or a
+    wide table, so a reader had to reverse-engineer the chart before reading it."""
+    page = render(_summary_doc(name))
+
+    for tab in TAB_PANES:
+        assert _pane(page, tab).startswith('<div class="lede">'), tab
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_every_summary_asks_its_question_before_it_answers_it(name):
+    """Question, then figures, then what to read and what readers get wrong. A tab that
+    led with its caveat or put its numbers last would be back to being a chart the reader
+    has to decode first."""
+    page = render(_summary_doc(name))
+
+    for tab in TAB_PANES:
+        head, sep, tail = _lede(_pane(page, tab)).partition('<p class="figs">')
+        assert sep, tab
+        assert head.count("<p>") == 1, tab      # the question, and only the question
+        assert "?" in head, tab
+        assert tail.count("<p>") >= 2, tab      # what to read first, and the misreading
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_the_overview_summary_counts_the_cells_its_grid_draws(name):
+    pane = _pane(render(_summary_doc(name)), "overview")
+    figures = _figures(pane)
+    # Recounted from the rendered grid, which is what the reader is being oriented to.
+    cells = collections.Counter(re.findall(r'<td class="(ok|failed|missing|na)"', pane))
+    rows, columns = (int(n) for n in figures["targets × models"].split("×"))
+
+    assert rows * columns == sum(cells.values())
+    assert figures["produced maps"] == f"{cells['ok']:,}"
+    assert figures["failed"] == f"{cells['failed']:,}"
+    assert figures["not applicable"] == f"{cells['na']:,}"
+    assert figures.get("never came back", "0") == f"{cells['missing']:,}"
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_the_cross_summary_counts_the_flags_its_own_table_shows(name):
+    """The failure this exists to prevent: "43 agree" above a table showing something
+    else. Both numbers are recounted from the rendered rows."""
+    pane = _pane(render(_summary_doc(name)), "cross")
+    figures = _figures(pane)
+    table = pane.split("Agreement with the reference")[1]
+
+    assert figures["comparisons"] == f"{table.count('&#9679;'):,}"
+    assert figures["agree within tolerance"] == f"{table.count('&#9679; green'):,}"
+    assert figures["differ for a declared reason"] == f"{table.count('&#9679; amber'):,}"
+    assert figures["flagged"] == f"{table.count('&#9679; red'):,}"
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_the_cross_summary_counts_the_coverage_table_it_points_at(name):
+    pane = _pane(render(_summary_doc(name)), "cross")
+    figures = _figures(pane)
+    coverage = pane.split("Coverage, and holes")[1].split("</table>")[0]
+    header = re.search(r"<tr><th>Model</th>(.*?)</tr>", coverage).group(1)
+
+    assert figures["software families"] == f"{header.count('<th>'):,}"
+    assert figures["models"] == f"{coverage.count('<tr><th>') - 1:,}"
+    holes = coverage.count(">declared hole</td>")
+    claimed = re.search(r"its ([\d,]+) <i>declared hole</i> cells", pane)
+    assert (int(claimed.group(1).replace(",", "")) if claimed else 0) == holes
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_the_agreement_summary_counts_pairs_the_document_holds(name):
+    """Counted from the document here, narrowed the way the five version tabs are, so
+    the summary cannot quietly start counting targets its own tab does not draw."""
+    doc = _summary_doc(name)
+    figures = _figures(_pane(render(doc), "agree"))
+    keep = _history_targets(doc)
+
+    identical, charts = 0, 0
+    for by_map in doc["equivalence"].values():
+        for classes in by_map.values():
+            kept = [[t for t in g if t in keep] for g in classes.values()]
+            kept = [g for g in kept if g]
+            charts += 1 if kept else 0
+            identical += sum(len(g) * (len(g) - 1) // 2 for g in kept)
+    measured = sum(1 for by_map in doc["comparisons"].values() for pairs in by_map.values()
+                   for p in pairs if p["a"] in keep and p["b"] in keep)
+
+    assert figures["targets"] == f"{len(keep):,}"
+    assert figures["maps"] == f"{charts:,}"
+    assert figures["pairs measured"] == f"{measured:,}"
+    assert figures["pairs byte-identical"] == f"{identical:,}"
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_the_values_summary_counts_the_rows_and_marks_it_draws(name):
+    """One circle is one target row and one `skewed` mark is one skewed row, so both
+    figures are recounted off the charts themselves."""
+    pane = _pane(render(_summary_doc(name)), "values")
+    figures = _figures(pane)
+
+    assert figures["target rows"] == f"{pane.count('<circle'):,}"
+    assert figures["rows skewed"] == f"{pane.count('>skewed</text>'):,}"
+    assert figures["maps"] == f"{pane.count('data-group=\"rng\"'):,}"
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_the_timing_summary_names_the_fastest_and_slowest_bars(name):
+    pane = _pane(render(_summary_doc(name)), "timing")
+    figures = _figures(pane)
+    # Every bar prints its own median beside it; these are those numbers, re-read.
+    drawn = [float(v) for v in re.findall(r">([\d.e+-]+)s</text>", pane)]
+
+    assert figures["fits timed"] == f"{len(drawn):,}"
+    if not drawn:
+        return
+    assert float(figures["fastest"].split()[0]) == min(drawn)
+    assert float(figures["slowest"].split()[0]) == max(drawn)
+    # And the prose says which fit each of those is, not just how long it took.
+    assert figures["fastest"] in pane.split('<p class="figs">')[1]
+    assert figures["slowest"] in pane.split('<p class="figs">')[1]
+
+
+@pytest.mark.parametrize("name", SUMMARY_DOCS)
+def test_the_data_summary_counts_the_rows_of_the_table_below_it(name):
+    doc = _summary_doc(name)
+    pane = _pane(render(doc), "data")
+    figures = _figures(pane)
+    stats_table = pane.split("<caption>Provenance")[0]
+
+    assert figures["statistic rows"] == f"{stats_table.count('<td><code>'):,}"
+    assert figures["targets"] == f"{len(_history_targets(doc)):,}"
+
+
+def test_a_summary_figure_moves_when_the_document_does():
+    """The whole point. Change one flag in the document and the headline count follows;
+    a transcribed number would sit there saying two greens over a table showing one."""
+    before = _figures(_pane(render(THREE_FAMILY), "cross"))
+    moved = json.loads(json.dumps(THREE_FAMILY))
+    moved["comparisons"]["mt_sat"]["T1"][0]["flag"] = "red"
+    moved["comparisons"]["mt_sat"]["T1"][0]["flag_reason"] = "now a finding"
+
+    after = _figures(_pane(render(moved), "cross"))
+
+    assert int(after["flagged"]) == int(before["flagged"]) + 1
+    assert int(after["differ for a declared reason"]) == \
+        int(before["differ for a declared reason"]) - 1
+
+
+def test_the_summary_block_is_styled_from_the_theme_tokens_only():
+    """The page ships two themes and no assets. A colour written into the .lede rules
+    would be right in one theme and unreadable in the other."""
+    block = _CSS[_CSS.index(".lede{"):_CSS.index("select{")]
+
+    assert "var(--" in block
+    assert "#" not in block
