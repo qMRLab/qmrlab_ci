@@ -10,7 +10,13 @@ import pathlib
 import pytest
 import yaml
 
-from harness.config import KNOWN_LANES, ConfigError, load_models, load_targets
+from harness.config import (
+    DEFAULT_SCALE_FREE_RANGE,
+    KNOWN_LANES,
+    ConfigError,
+    load_models,
+    load_targets,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -201,3 +207,108 @@ def test_a_native_target_needs_no_matlab_release_and_no_era(tmp_path):
 def test_an_unknown_lane_is_still_refused(tmp_path):
     with pytest.raises(ConfigError, match="lane must be one of"):
         _target(tmp_path, lane="conda")
+
+
+# --- MapSpec.scale_free_range (spec §7) ----------------------------------------------
+
+def test_the_scale_free_predicate_is_the_canonical_unit_and_lives_on_the_map(tmp_path):
+    """One predicate, one place. analyze keys the normalisation on it and config keys
+    the validation of scale_free_range on it, and if those two ever disagreed a map
+    could be normalised without being allowed a normalised bound, or the reverse."""
+    models = _model(
+        tmp_path,
+        maps=[{"name": "M0", "unit": "au"}, {"name": "T1", "unit": "s"}],
+    )
+
+    assert models["m"].maps[0].scale_free is True
+    assert models["m"].maps[1].scale_free is False
+
+
+def test_a_scale_free_map_that_declares_no_range_still_gets_one(tmp_path):
+    """Unlike comparison_range, an absent declaration is a default rather than "no
+    bound". Every 'au' map is normalised, and normalising does nothing about leverage:
+    an undefaulted map added later would silently reintroduce the failure the field
+    exists to remove — two diverged voxels deciding r and CCC for 27,000 others."""
+    models = _model(tmp_path, maps=[{"name": "M0", "unit": "au"}])
+
+    assert models["m"].maps[0].scale_free_range == DEFAULT_SCALE_FREE_RANGE
+
+
+def test_a_declared_scale_free_range_wins_and_is_carried_as_floats(tmp_path):
+    """Floats for comparison_range's reason: the bound is compared against float64
+    voxel values, and [0, 5] and [0.0, 5.0] must not be two declarations of one range."""
+    models = _model(
+        tmp_path, maps=[{"name": "M0", "unit": "au", "scale_free_range": [0, 5]}]
+    )
+
+    assert models["m"].maps[0].scale_free_range == (0.0, 5.0)
+
+
+def test_a_physical_map_carries_no_scale_free_range_at_all(tmp_path):
+    """Non-None on exactly the maps the range will be applied to. A physical map
+    holding a normalised bound nothing reads is a field waiting to be read by mistake."""
+    models = _model(tmp_path, maps=[{"name": "T1", "unit": "s"}])
+
+    assert models["m"].maps[0].scale_free_range is None
+
+
+def test_a_physical_range_on_an_arbitrary_amplitude_is_a_config_error(tmp_path):
+    """The bound would be a bound on whichever scale the software chose, so it would
+    exclude voxels for a reason the normalisation exists to stop being a finding.
+    Refused rather than ignored: an ignored range publishes a red flag computed over a
+    voxel selection nobody declared."""
+    with pytest.raises(
+        ConfigError, match=r"broken\.yml.*'M0'.*comparison_range cannot.*'au'"
+    ):
+        _model(
+            tmp_path, id="broken",
+            maps=[{"name": "M0", "unit": "au", "comparison_range": [0, 10]}],
+        )
+
+
+def test_a_normalised_range_on_a_physical_map_is_a_config_error(tmp_path):
+    """The mirror, and the more dangerous direction: [0, 10] on a T1 in seconds reads
+    as a physical bound and would silently become "within 10x the median T1"."""
+    with pytest.raises(
+        ConfigError, match=r"broken\.yml.*'T1'.*scale_free_range.*masked median.*'s'"
+    ):
+        _model(
+            tmp_path, id="broken",
+            maps=[{"name": "T1", "unit": "s", "scale_free_range": [0, 10]}],
+        )
+
+
+def test_a_malformed_scale_free_range_names_that_field_and_not_the_other_one(tmp_path):
+    """Two range fields in two domains, so "which range is malformed" is half the
+    answer; a message naming comparison_range would send the reader to the wrong line."""
+    with pytest.raises(
+        ConfigError, match=r"broken\.yml.*'M0'.*scale_free_range must have lo < hi"
+    ):
+        _model(
+            tmp_path, id="broken",
+            maps=[{"name": "M0", "unit": "au", "scale_free_range": [10, 0]}],
+        )
+
+
+def test_a_non_numeric_scale_free_bound_is_a_config_error(tmp_path):
+    with pytest.raises(
+        ConfigError, match=r"broken\.yml.*'M0'.*scale_free_range bounds.*'ten'"
+    ):
+        _model(
+            tmp_path, id="broken",
+            maps=[{"name": "M0", "unit": "au", "scale_free_range": [0, "ten"]}],
+        )
+
+
+def test_a_nan_scale_free_bound_is_refused(tmp_path):
+    """Every comparison with NaN is False, so a NaN bound would exclude every voxel
+    while looking like a declared range — and on a scale-free map that reads as two
+    softwares having no comparable voxels rather than as a typo."""
+    (tmp_path / "models").mkdir(exist_ok=True)
+    (tmp_path / "models" / "broken.yml").write_text(
+        "id: broken\ndataset: ir\nmask: masks/m.nii.gz\n"
+        "maps: [{name: M0, unit: au, scale_free_range: [0, .nan]}]\n"
+    )
+
+    with pytest.raises(ConfigError, match=r"broken\.yml.*'M0'.*lo < hi"):
+        load_models(tmp_path)

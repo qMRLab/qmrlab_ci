@@ -7,7 +7,13 @@ maps:
   # purpose: the range must exclude divergence only, never a value some implementation
   # legitimately fitted.
   - {name: T1, unit: s, comparison_range: [0, 10]}
-  # No range on M0. Its unit is 'au', so its amplitude is a free scale and any bound would
-  # be a bound on the arbitrary scale rather than on the physics -- the comparison
-  # normalises it by its own masked median instead (spec §7).
-  - {name: M0, unit: au}
+  # No comparison_range on M0. Its unit is 'au', so its amplitude is a free scale and a
+  # bound in physical units would bound the arbitrary scale rather than the physics --
+  # the comparison normalises it by its own masked median instead (spec §7). The bound
+  # below is in multiples of that median, so it survives the normalisation, and it exists
+  # because normalising does nothing about leverage: r and CCC are variance-based, and a
+  # diverged voxel decides them for every other (models/mono_t2.yml is the worked case).
+  # Nothing here is near it -- this M0 spans 0.087 to 2.45 across all 4,668 in-mask
+  # voxels and every target, so the range excludes nothing today and is declared for the
+  # divergence a future refit could produce, not for one already in the data.
+  - {name: M0, unit: au, scale_free_range: [0, 10]}

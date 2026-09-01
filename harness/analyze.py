@@ -257,13 +257,10 @@ def analyze(
             # Cannot miss: `canonical` is only ever filled with a map name that was
             # matched against this model's catalog entry on the way in.
             spec = next(m for m in models[model_id].maps if m.name == map_name)
-            # Keyed on the CANONICAL unit, never on the record's produced unit, and that
-            # is load-bearing rather than incidental: every adapter reports B1map as 'au'
-            # while models/b1_*.yml declares 'fraction' (spec §5.3), so keying on the
-            # produced unit would median-normalise a genuine ratio in which 1.0 means the
-            # nominal flip angle was reached — deleting a 10% B1 calibration offset
-            # instead of measuring it, which spec §7 forbids by name.
-            scale_free = spec.unit == "au"
+            # MapSpec owns the rule and its justification: it is keyed on the CANONICAL
+            # unit, never on the unit a record says it produced, and config.py's
+            # validation of scale_free_range depends on the same predicate.
+            scale_free = spec.scale_free
             pairs = []
             for a, b in itertools.combinations(sorted(by_target), 2):
                 entry = comparability_for(
@@ -277,22 +274,47 @@ def analyze(
                     # answer to it. site.py already renders an absent pair as "no
                     # comparable voxels" (spec §5.5).
                     continue
-                selection, n_out_of_range = _comparison_selection(
+                selection, n_out_of_physical_range = _comparison_selection(
                     by_target[a], by_target[b], mask, spec
+                )
+                # The scale-free range cannot be applied out here with the physical one:
+                # it is expressed in units of each map's own masked median, and those
+                # medians are not known until compare_maps has taken them over this very
+                # selection. So the physical range narrows the selection and the
+                # normalised range narrows the normalised values inside.
+                compared = compare_maps(
+                    by_target[a], by_target[b], selection,
+                    scale_free=scale_free, scale_free_range=spec.scale_free_range,
                 )
                 row = {
                     "a": a, "b": b,
-                    **compare_maps(
-                        by_target[a], by_target[b], selection, scale_free=scale_free
-                    ),
-                    # Both keys on every row, declared or not, for _unmeasurable's
+                    **compared,
+                    # All three keys on every row, declared or not, for _unmeasurable's
                     # reason: rows of two different shapes move the failure into
                     # whichever renderer reads the short one.
+                    #
+                    # Two range keys rather than one, because they are in two different
+                    # domains -- comparison_range in the map's canonical unit,
+                    # scale_free_range in multiples of that map's own masked median. A
+                    # reader must never have to work out which, and the key name is the
+                    # only place that can be said without a legend. config.py refuses
+                    # either on the wrong kind of map, so at most one is ever non-None.
                     "comparison_range": (
                         None if spec.comparison_range is None
                         else list(spec.comparison_range)
                     ),
-                    "n_out_of_range": n_out_of_range,
+                    "scale_free_range": (
+                        None if spec.scale_free_range is None
+                        else list(spec.scale_free_range)
+                    ),
+                    # One count, because a voxel excluded is a voxel excluded and the
+                    # reader wants to know how many left the comparison, not which
+                    # mechanism took them. Which one it was is legible from whichever
+                    # range key is non-None; summing rather than choosing keeps this
+                    # honest if the two ever stop being mutually exclusive.
+                    "n_out_of_range": (
+                        n_out_of_physical_range + compared["n_out_of_range"]
+                    ),
                 }
                 # The colour is never computed from the numbers alone. Red is only
                 # assignable inside same-estimator, and `estimator_class` travels with the

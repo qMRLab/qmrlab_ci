@@ -16,7 +16,13 @@ from __future__ import annotations
 import numpy as np
 
 
-def _unmeasurable(n: int, *, scale_free: bool, scale_ratio: float | None) -> dict:
+def _unmeasurable(
+    n: int,
+    *,
+    scale_free: bool,
+    scale_ratio: float | None,
+    n_out_of_range: int = 0,
+) -> dict:
     """Every measure absent, with every key still present.
 
     analyze.py spreads this dict into a site row with **, so a branch that dropped keys
@@ -35,6 +41,10 @@ def _unmeasurable(n: int, *, scale_free: bool, scale_ratio: float | None) -> dic
         "ccc": None,
         "scale_free": scale_free,
         "scale_ratio_not_a_disagreement": scale_ratio,
+        # Carried even here, and especially here: a range that excluded every voxel
+        # produces exactly this dict, and without the count "no comparable voxels" would
+        # read as a mask that never held any rather than as a range that emptied it.
+        "n_out_of_range": n_out_of_range,
     }
 
 
@@ -45,11 +55,21 @@ def compare_maps(
     *,
     rel_tol: float = 0.01,
     scale_free: bool = False,
+    scale_free_range: tuple[float, float] | None = None,
 ) -> dict:
     a = np.asarray(a, dtype=np.float64)
     b = np.asarray(b, dtype=np.float64)
     if a.shape != b.shape:
         raise ValueError(f"voxel count mismatch: {a.shape} vs {b.shape}")
+    if scale_free_range is not None and not scale_free:
+        # A caller bug, and one that would otherwise silently threshold PHYSICAL values
+        # against bounds meant for median-normalised ones -- excluding voxels for how the
+        # software scaled the map, which is the one thing normalisation exists to stop
+        # being a finding. Bounds themselves are validated once, in config.py.
+        raise ValueError(
+            "scale_free_range is in units of each map's own masked median and has no "
+            "meaning without scale_free=True"
+        )
 
     sel = np.asarray(mask).astype(bool) & np.isfinite(a) & np.isfinite(b)
     x, y = a[sel], b[sel]
@@ -58,6 +78,7 @@ def compare_maps(
         return _unmeasurable(0, scale_free=scale_free, scale_ratio=None)
 
     scale_ratio = None
+    n_out_of_range = 0
     if scale_free:
         # Spec §7: normalise each map by its own masked median, for maps whose unit is
         # 'au' and whose amplitude is therefore a free scale (vfa_t1/M0, mono_t2/M0).
@@ -78,6 +99,29 @@ def compare_maps(
                 int(x.size), scale_free=scale_free, scale_ratio=scale_ratio
             )
         x, y = x / mx, y / my
+
+        if scale_free_range is not None:
+            # AFTER the medians and the normalisation, BEFORE any statistic. Both halves
+            # of that order matter. The medians must come from the whole masked selection
+            # or the normalisation would depend on a range that depends on the
+            # normalisation; and every statistic must come after, because r and CCC are
+            # variance-based and a diverged voxel decides them for all the others -- two
+            # voxels at 219x the median take mono_t2/M0 from r 0.877 to 0.333.
+            #
+            # Both sides must be inside, exactly as comparison_range requires: a voxel one
+            # implementation fitted at 219x its own median amplitude is not comparable to
+            # the other's 7x whichever side produced it. `scale_ratio` above is measured
+            # before this and stays measured over the full selection -- it is the recovered
+            # amplitude ratio, not a statistic the outliers are allowed to distort.
+            lo, hi = scale_free_range
+            keep = (x >= lo) & (x <= hi) & (y >= lo) & (y <= hi)
+            n_out_of_range = int((~keep).sum())
+            x, y = x[keep], y[keep]
+            if x.size == 0:
+                return _unmeasurable(
+                    0, scale_free=scale_free, scale_ratio=scale_ratio,
+                    n_out_of_range=n_out_of_range,
+                )
 
     delta = x - y
     # Relative to the reference `b`, matching compare_maps.py. Where b is exactly
@@ -133,4 +177,8 @@ def compare_maps(
         # that does not say so is exactly the misreading spec §7.3 exists to prevent.
         "scale_free": scale_free,
         "scale_ratio_not_a_disagreement": scale_ratio,
+        # Reported for masked_stats' n_nonfinite reason: an exclusion nobody can see is
+        # indistinguishable from a mask that never had those voxels. 0 whenever no range
+        # was applied, so the key means the same thing on every row.
+        "n_out_of_range": n_out_of_range,
     }

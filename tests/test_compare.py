@@ -246,3 +246,109 @@ def test_existing_keys_are_untouched_by_the_new_ones():
         "n", "frac_within", "pearson_r", "mean_delta", "median_delta", "max_abs_delta"
     } <= keys
     assert set(compare_maps(np.array([1.0]), np.array([np.nan]), np.array([1]))) == keys
+
+
+# --- the scale-free range (spec §7) --------------------------------------------------
+
+def test_a_diverged_amplitude_stops_deciding_the_statistics_for_every_other_voxel():
+    """The measured failure, in miniature. On the published mono_t2/M0 maps two voxels
+    of 27,417 reach 219x their map's median and take r from 0.877 to 0.333 and CCC from
+    0.861 to 0.129 — while the relative median difference reads -0.3%. Normalising does
+    not help: r and CCC are variance-based, so the outlier survives the division by the
+    median and then dominates the variance it lands in."""
+    y = np.concatenate([np.linspace(0.5, 1.5, 40), [1.0]])
+    a = y.copy()
+    a[-1] = 219.0
+    mask = np.ones(y.size)
+
+    loose = compare_maps(a, y, mask, scale_free=True)
+    bounded = compare_maps(a, y, mask, scale_free=True, scale_free_range=(0.0, 10.0))
+
+    assert loose["pearson_r"] < 0.2
+    assert loose["ccc"] < 0.2
+    assert bounded["pearson_r"] > 0.999
+    assert bounded["ccc"] > 0.99
+    assert bounded["n"] == 40
+    assert bounded["n_out_of_range"] == 1
+    # Not perfect agreement, and deliberately not asserted as such: dropping the voxel
+    # does not put it back in the median the two maps were normalised by, exactly as on
+    # the real pair where the recovered scale ratio is 1.003 rather than 1.
+    assert bounded["scale_ratio_not_a_disagreement"] != 1.0
+
+
+def test_the_bound_is_read_in_median_normalised_units_not_in_the_produced_ones():
+    """The entire reason the field is separate from comparison_range. These voxels are
+    thousands in whatever unit the software wrote, and 0.5 to 1.5 in multiples of their
+    own median, so a bound of 10 excludes none of them."""
+    y = np.linspace(500.0, 1500.0, 40)
+
+    c = compare_maps(y, y, np.ones(y.size), scale_free=True, scale_free_range=(0.0, 10.0))
+
+    assert c["n"] == 40
+    assert c["n_out_of_range"] == 0
+
+
+def test_both_sides_must_be_inside_exactly_as_a_physical_range_requires():
+    """One implementation's 219x-the-median amplitude is not comparable to the other's
+    1.0 whichever side produced it — the voxel is a diverged fit either way."""
+    y = np.ones(9)
+    a = np.concatenate([np.ones(8), [219.0]])
+
+    c = compare_maps(a, y, np.ones(9), scale_free=True, scale_free_range=(0.0, 10.0))
+    flipped = compare_maps(y, a, np.ones(9), scale_free=True,
+                           scale_free_range=(0.0, 10.0))
+
+    assert c["n"] == flipped["n"] == 8
+    assert c["n_out_of_range"] == flipped["n_out_of_range"] == 1
+
+
+def test_the_medians_come_from_the_whole_selection_so_the_range_cannot_move_them():
+    """Order is the design. If the range narrowed the maps before the medians were
+    taken, the normalisation would depend on a bound that depends on the normalisation,
+    and the published scale ratio would be measured over a selection it did not
+    describe. Here the outlier does not shift the median, and the ratio stays exactly
+    the 2.0 the two maps differ by."""
+    y = np.concatenate([np.linspace(0.5, 1.5, 40), [50.0]])
+    a = 2.0 * y
+
+    c = compare_maps(a, y, np.ones(y.size), scale_free=True,
+                     scale_free_range=(0.0, 10.0))
+
+    assert c["scale_ratio_not_a_disagreement"] == pytest.approx(2.0)
+    assert c["n_out_of_range"] == 1
+
+
+def test_a_normalised_bound_without_normalisation_raises_rather_than_thresholding():
+    """It would compare PHYSICAL values against bounds meant for multiples of a median
+    — on a T1 in seconds, "keep 0 to 10" would look entirely plausible and mean
+    something else. A caller bug, so it fails loudly at the call rather than on the
+    site."""
+    v = np.array([1.0, 2.0, 3.0, 4.0])
+
+    with pytest.raises(ValueError, match="masked median"):
+        compare_maps(v, v, ALL, scale_free_range=(0.0, 10.0))
+
+
+def test_a_range_that_empties_the_comparison_still_reports_what_it_removed():
+    """"No comparable voxels" and "a range removed all of them" are different findings
+    and must not render as the same one."""
+    y = np.concatenate([np.full(4, 1.0), np.full(4, 1000.0)])
+    a = y.copy()
+
+    c = compare_maps(a, y, np.ones(8), scale_free=True, scale_free_range=(50.0, 100.0))
+
+    assert c["n"] == 0
+    assert c["n_out_of_range"] == 8
+    assert c["ccc"] is None
+    assert c["scale_ratio_not_a_disagreement"] == pytest.approx(1.0)
+
+
+def test_every_row_carries_the_exclusion_count_whether_a_range_applied_or_not():
+    """_unmeasurable's rule: rows of two different shapes move the failure into
+    whichever renderer reads the short one."""
+    v = np.array([1.0, 2.0, 3.0, 4.0])
+
+    assert compare_maps(v, v, ALL)["n_out_of_range"] == 0
+    assert compare_maps(v, v, ALL, scale_free=True)["n_out_of_range"] == 0
+    assert compare_maps(np.array([1.0]), np.array([np.nan]),
+                        np.array([1]))["n_out_of_range"] == 0

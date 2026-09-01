@@ -6,5 +6,21 @@ maps:
   # fit that ran away up the exponential's flat tail. Deliberately not tightened to the
   # tissue range: a range chosen to make the agreement look good would be worse than none.
   - {name: T2, unit: s, comparison_range: [0, 10]}
-  # No range on M0, for models/vfa_t1.yml's reason: 'au' is a free scale.
-  - {name: M0, unit: au}
+  # 'au' is a free scale, so M0 takes no comparison_range: a bound in physical units
+  # would bound whichever amplitude the software happened to choose. The bound it takes
+  # instead is in multiples of its OWN masked median, applied after normalisation.
+  #
+  # This is the map that proves the field is needed. Two voxels of 27,417 reach 219x the
+  # median on the v2.4.0 side, and those two alone take r from 0.877 to 0.333 and CCC
+  # from 0.861 to 0.129 -- a red flag, while the relative median difference reads -0.3%.
+  # 10 is not a number picked to clear it. qMRLab's own mono_t2.m declares
+  # `ub = [300 10000]`, i.e. the model bounds M0 at 10000, and this dataset's masked
+  # median is ~1330, so 10x the median is ~13,300: ABOVE the ceiling the fit sets for
+  # itself. master, v2.5.0, v3.0.0 and qmrust all honour it and land at most at 7.5x --
+  # several voxels resting exactly on 10000, which is a value at a solver bound and not
+  # a measurement. v2.4.0 and v2.4.1 do not, and reach 291,569. So the range excludes
+  # nothing a bounded fit can produce, and reaches only what an unbounded one did. That
+  # version defect is not tidied away by this: it is counted on the row as
+  # n_out_of_range, and the same two versions are already flagged red against every
+  # other on the T2 map above, where the values stay comparable enough to measure.
+  - {name: M0, unit: au, scale_free_range: [0, 10]}

@@ -667,3 +667,123 @@ def test_the_range_acts_inside_the_comparison_mask_not_instead_of_it(tmp_path):
     assert pair["n"] == 2  # 4 voxels, minus the one the mask drops and the one the range does
     assert pair["n_out_of_range"] == 1
     assert doc["records"][0]["maps"][0]["stats"]["n"] == 4
+
+
+# --- MapSpec.scale_free_range (spec §7) ----------------------------------------------
+
+_BOUNDED_M0 = [{"name": "M0", "unit": "au", "scale_free_range": [0, 10]}]
+
+
+def test_a_scale_free_range_narrows_the_pair_and_nothing_else(tmp_path):
+    """comparison_range's guarantee, on the other kind of map: the published statistics
+    and the hash are computed over the model's full mask on the produced values, and a
+    normalised bound may not touch either. This is what keeps declaring one from moving
+    a number already on the site or a history.jsonl digest."""
+    from harness.measure import voxel_sha256
+
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 1.0, 1.0, 4000.0], unit="au", name="M0")
+    _target(results, "b@1", [1.0, 1.0, 1.0, 4000.0], unit="au", name="M0")
+    _mask(root, 4)
+    _local_catalog(root, maps=_BOUNDED_M0)
+
+    doc = analyze(results, root, reference="a@1")
+    pair = doc["comparisons"]["vfa_t1"]["M0"][0]
+    m = doc["records"][0]["maps"][0]
+
+    assert pair["n"] == 3
+    assert pair["n_out_of_range"] == 1
+    assert m["stats"]["n"] == 4
+    assert m["stats"]["max"] == 4000.0
+    assert m["voxel_sha256"] == voxel_sha256(np.array([1.0, 1.0, 1.0, 4000.0]))
+
+
+def test_the_two_ranges_are_published_under_their_own_names(tmp_path):
+    """A reader must never have to work out which domain a pair of bounds is in, and
+    the key name is the only place that can be said without a legend: comparison_range
+    is in the map's canonical unit, scale_free_range in multiples of its masked median.
+    Both keys on every row for _unmeasurable's reason, so a physical map says `null`
+    here rather than omitting the field."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 1.0, 1.0, 4000.0], unit="au", name="M0")
+    _target(results, "b@1", [1.0, 1.0, 1.0, 4000.0], unit="au", name="M0")
+    _mask(root, 4)
+    _local_catalog(root, maps=_BOUNDED_M0)
+
+    free = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["M0"][0]
+
+    assert free["scale_free"] is True
+    assert free["scale_free_range"] == [0, 10]
+    assert free["comparison_range"] is None
+
+    results, root = tmp_path / "physical", tmp_path / "proot"
+    _target(results, "a@1", [1.0, 2.0])
+    _target(results, "b@1", [1.0, 2.0])
+    _mask(root, 2)
+    _local_catalog(root, maps=_RANGED_T1)
+
+    physical = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["T1"][0]
+
+    assert physical["scale_free"] is False
+    assert physical["scale_free_range"] is None
+    assert physical["comparison_range"] == [0, 10]
+
+
+def test_an_au_map_that_declares_no_range_is_still_bounded(tmp_path):
+    """The default is not "no bound". Every 'au' map is normalised and normalising does
+    nothing about leverage, so a map added later without a declaration must not
+    silently go back to letting two diverged voxels decide r and CCC."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 1.0, 1.0, 4000.0], unit="au", name="M0")
+    _target(results, "b@1", [1.0, 1.0, 1.0, 4000.0], unit="au", name="M0")
+    _mask(root, 4)
+    _local_catalog(root, maps=[{"name": "M0", "unit": "au"}])
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["M0"][0]
+
+    assert pair["scale_free_range"] == [0.0, 10.0]
+    assert pair["n_out_of_range"] == 1
+
+
+def test_two_diverged_voxels_no_longer_decide_the_flag_for_all_the_others(tmp_path):
+    """The bug this fixed, at the shape it had on the published site: mono_t2/M0,
+    qmrlab@master against qmrlab@v2.4.0, where two voxels of 27,417 reaching 219x their
+    map's median took CCC to 0.129 and painted the pair red while the relative median
+    difference read -0.3%. The exclusion is visible on the row, because an exclusion
+    nobody can see is indistinguishable from a mask that never held those voxels."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    # 41 voxels the two agree on exactly, plus the one where b's fit ran away. Enough of
+    # them that the runaway barely moves b's median, which is the real map's situation:
+    # the recovered scale ratio there is 1.003.
+    agree = [round(0.80 + 0.01 * i, 2) for i in range(41)]
+    _target(results, "a@1", agree + [1.0], unit="au", name="M0")
+    _target(results, "b@1", agree + [219.0], unit="au", name="M0")
+    _mask(root, 42)
+    _local_catalog(root, maps=_BOUNDED_M0)
+
+    doc = analyze(results, root, reference="a@1")
+    pair = doc["comparisons"]["vfa_t1"]["M0"][0]
+
+    assert pair["n"] == 41
+    assert pair["n_out_of_range"] == 1
+    assert pair["ccc"] > 0.9
+    assert pair["flag"] == "green"
+
+
+def test_the_scale_free_range_never_reaches_a_map_with_a_physical_unit(tmp_path):
+    """The B1map trap one field further on. Every adapter reports B1map as 'au' while
+    models/b1_*.yml declares 'fraction', so a range keyed on the RECORD's unit would
+    threshold a genuine ratio against multiples of its median — and 1.0 there means the
+    nominal flip angle was reached, not "the middle of this map"."""
+    results, root = tmp_path / "results", tmp_path / "root"
+    _target(results, "a@1", [1.0, 1.2, 40.0], unit="au", name="B1map")
+    _target(results, "b@1", [1.0, 1.2, 40.0], unit="au", name="B1map")
+    _mask(root, 3)
+    _local_catalog(root, maps=[{"name": "B1map", "unit": "fraction"}])
+
+    pair = analyze(results, root, reference="a@1")["comparisons"]["vfa_t1"]["B1map"][0]
+
+    assert pair["scale_free"] is False
+    assert pair["scale_free_range"] is None
+    assert pair["n"] == 3
+    assert pair["n_out_of_range"] == 0
